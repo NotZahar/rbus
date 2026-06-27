@@ -1,0 +1,9 @@
+[Unit]
+Description=rbus daemon socket
+
+[Socket]
+ListenStream=%t/rbus/default.sock
+SocketMode=0600
+
+[Install]
+WantedBy=sockets.target

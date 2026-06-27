@@ -1,0 +1,97 @@
+# rbus
+
+`rbus` — локальный message bus для Linux-процессов automotive/robotics. Цель проекта:
+быстрый publish/subscribe через shared memory, минимальный публичный Rust API и
+диагностика только через предупреждения.
+
+Текущий toolchain зафиксирован после проверки в контейнере Ubuntu 26.04:
+`rustc 1.96.0 (ac68faa20 2026-05-25)`.
+
+## Ограничения
+
+- ROS2 bridge намеренно отсутствует.
+- DDS/ROS2 runtime-зависимости не используются.
+- Сетевой транспорт не входит в runtime rbus.
+- Public API не содержит async, callback, serde, QoS builder, C/Python bindings.
+
+## Быстрый старт разработки
+
+Все проверки выполняются через TypeScript-скрипт и Podman-контейнер:
+
+```bash
+npm run image
+npm run check
+```
+
+Отдельные команды:
+
+```bash
+npm run fmt
+npm run clippy
+npm run test
+npm run bench:smoke
+npm run hot-path:syscalls
+```
+
+## Daemon и CLI
+
+`rbusd --domain default` запускает foreground control-plane daemon и слушает
+Unix socket domain-а. Для короткой проверки без socket-а используется
+`rbusd --domain default --smoke`.
+
+`Bus::connect("default")` подключается к уже запущенному `rbusd`; локальный
+registry fallback отсутствует. Publisher получает stream metadata и memfd FD от
+daemon-а, subscriber получает `subscriber_id` и attach-ит streams через
+`SCM_RIGHTS`. Payload после setup идёт только через shared memory, не через
+daemon.
+
+CLI-команды `list`, `stats`, `warnings`, `inspect`, `cleanup` и `doctor`
+обращаются к `rbusd`. Если daemon недоступен, команда завершается warning-ом
+`DaemonUnavailable` и кодом `2`. `list`/`inspect` читают active registry
+metadata и `SegmentHeader` без payload, `stats` и `warnings` агрегируют
+`StreamCounters` из shared memory, `cleanup` возвращает реально очищенные
+orphaned resources, а `doctor` проверяет `/run/user/<uid>`, socket path, права
+и owner socket directory, ABI/protocol, `memfd`, `mmap`, `eventfd`, `futex`,
+`SCM_RIGHTS`, `MAX_SEGMENT_SIZE` и resource limits.
+
+`rbus-cli --help` печатает общий список команд, а
+`rbus-cli <command> --help` печатает справку по конкретной команде.
+
+Crash cleanup выполняется daemon-ом по закрытию persistent control session:
+dead subscriber bits очищаются из `readers_mask`, dead publisher stream
+помечается closed в shared memory, а stale socket pathname удаляется при restart
+`rbusd`. Уже attached data plane продолжает работать, если сам daemon был убит и
+запущен заново.
+
+## Минимальный API
+
+```rust
+use rbus::{Bus, TopicConfig};
+
+# fn main() -> rbus::RbusResult<()> {
+let bus = Bus::connect("default")?;
+let publisher = bus.publisher("/camera/front/image", TopicConfig::new(4096, 64))?;
+let subscriber = bus.subscriber("/camera/front/image")?;
+
+let mut message = publisher.loan(4)?;
+message.as_mut_slice().copy_from_slice(&[1, 2, 3, 4]);
+publisher.publish(message)?;
+
+if let Some(message) = subscriber.try_recv()? {
+    let bytes = message.as_slice();
+    assert_eq!(bytes, &[1, 2, 3, 4]);
+}
+# Ok(())
+# }
+```
+
+## Документы
+
+- [Архитектура](../docs/ARCHITECTURE.ru.md)
+- [API](../docs/API.ru.md)
+- [Предупреждения](../docs/WARNINGS.ru.md)
+- [Тестирование](../docs/TESTING.ru.md)
+- [Benchmark-и](../docs/BENCHMARKS.ru.md)
+- [Эксплуатация](../docs/OPERATIONS.ru.md)
+- [Memory layout](../docs/MEMORY_LAYOUT.ru.md)
+- [Unsafe-инварианты](../docs/UNSAFE_INVARIANTS.ru.md)

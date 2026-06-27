@@ -1,0 +1,43 @@
+mod allocation;
+mod args;
+mod baseline;
+mod blocking_wait;
+mod daemon_process;
+mod harness;
+mod hot_path_syscall;
+mod metrics;
+mod output_format;
+mod payload;
+mod pinning;
+mod process;
+mod report;
+mod scenarios;
+mod suite;
+mod system_metrics;
+mod topology;
+mod transport_kind;
+mod transports;
+mod wait_mode;
+mod worker;
+
+use std::process::ExitCode;
+
+const WARNING_EXIT_CODE: u8 = 2;
+
+#[global_allocator]
+static GLOBAL_ALLOCATOR: allocation::CountingAllocator = allocation::CountingAllocator;
+
+fn main() -> ExitCode {
+    match args::BenchArguments::parse(std::env::args()) {
+        Ok(arguments) => harness::run(arguments),
+        Err(warning) => {
+            eprintln!(
+                "warning [{}]: {}\nstacktrace:\n{}",
+                warning.code().as_str(),
+                warning.message(),
+                std::backtrace::Backtrace::force_capture()
+            );
+            ExitCode::from(WARNING_EXIT_CODE)
+        }
+    }
+}

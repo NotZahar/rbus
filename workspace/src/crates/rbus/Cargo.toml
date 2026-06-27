@@ -1,0 +1,17 @@
+[package]
+name = "rbus"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+rbus-core.workspace = true
+rbus-ipc.workspace = true
+
+[dev-dependencies]
+libc.workspace = true

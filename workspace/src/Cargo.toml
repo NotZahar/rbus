@@ -1,0 +1,46 @@
+[workspace]
+members = [
+    "crates/rbus-core",
+    "crates/rbus-ipc",
+    "crates/rbus",
+    "crates/rbusd",
+    "crates/rbus-cli",
+    "crates/rbus-bench",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://example.invalid/rbus"
+rust-version = "1.96"
+
+[workspace.dependencies]
+libc = "0.2"
+rbus-core = { path = "crates/rbus-core", version = "0.1.0" }
+rbus-ipc = { path = "crates/rbus-ipc", version = "0.1.0" }
+rbus = { path = "crates/rbus", version = "0.1.0" }
+
+[profile.dev]
+debug = true
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+strip = "symbols"
+
+[profile.bench]
+inherits = "release"
+debug = true
+strip = "none"
+
+[workspace.lints.rust]
+dead_code = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+warnings = "deny"
+
+[workspace.lints.clippy]
+alloc_instead_of_core = "warn"
+std_instead_of_core = "allow"

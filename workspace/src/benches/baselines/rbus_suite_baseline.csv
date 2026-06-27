@@ -1,0 +1,4 @@
+scenario,transport,wait_mode,payload_size,latency_p50_ns,latency_p99_ns,throughput_messages_per_second,allocations_per_message,syscalls_per_message
+*,*,busy-poll,0,10000000000,10000000000,1,0,0
+*,*,recv,0,10000000000,10000000000,1,10,1
+*,*,recv-timeout,0,10000000000,10000000000,1,10,1
