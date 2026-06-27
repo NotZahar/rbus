@@ -44,4 +44,9 @@ fn bench_suite_matrix_smoke_outputs_csv() {
     let stdout = String::from_utf8(output.stdout).expect("value should be utf8");
     assert!(stdout.contains("status,scenario,transport,wait_mode,payload_size"));
     assert!(stdout.contains("ok,one-publisher-one-subscriber,rbus-loaned,busy-poll,64"));
+    assert!(stdout.contains("ok,one-publisher-one-subscriber,rbus-publish-bytes,busy-poll,64"));
+    assert!(stdout.contains("ok,one-publisher-one-subscriber,unix-socket,busy-poll,64"));
+    assert!(stdout.contains("ok,one-publisher-one-subscriber,pipe,busy-poll,64"));
+    assert!(stdout.contains("ok,one-publisher-one-subscriber,tcp-loopback,busy-poll,64"));
+    assert!(stdout.contains("ok,one-publisher-one-subscriber,posix-message-queue,busy-poll,64"));
 }

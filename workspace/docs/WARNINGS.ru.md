@@ -20,3 +20,9 @@ boxing и без clippy warning `result_large_err`.
 
 Fallback warning path для `shm_open` отсутствует, потому что сам fallback не
 реализуется в текущем runtime.
+
+`WarningCode::MessagesSkipped` означает, что subscriber cursor отстал от
+per-publisher stream-а и часть sequence уже перезаписана ring buffer-ом. Перед
+возвратом warning runtime сдвигает cursor этого stream-а на первую доступную
+committed sequence, поэтому следующий `try_recv` может прочитать актуальное
+сообщение вместо повторного warning по той же потерянной sequence.

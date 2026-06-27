@@ -49,6 +49,11 @@ Subscriber хранит cursor на каждый attached stream. Если strea
 не выполняется. Если stream появился после регистрации subscriber-а, cursor
 начинается с первой sequence этого stream-а, чтобы subscriber не терял первое
 сообщение нового publisher-а между control notification и следующим `try_recv`.
+Если cursor отстал дальше глубины ring-а или slot уже содержит более новую
+sequence, `try_recv` возвращает `WarningCode::MessagesSkipped`, но перед этим
+сдвигает cursor stream-а на первую доступную committed sequence. Следующий
+`try_recv` читает доступное сообщение, а не повторяет warning по уже потерянной
+sequence.
 
 `rbusd` запускает blocking accept-loop поверх Unix domain socket и создаёт
 worker thread на каждое accepted соединение. HELLO возвращает версию control

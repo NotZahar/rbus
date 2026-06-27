@@ -11,6 +11,10 @@ Steady-state требования:
 Текущий `rbus` stream backend создаёт `memfd` и `mmap MAP_SHARED` на setup path.
 После создания stream-а `loan`, `publish`, `try_recv` и `MessageRef::drop`
 работают через atomics и pointer offsets внутри уже mapped segment-а.
+`Publisher::publish` также записывает monotonic timestamp в `SlotHeader` перед
+commit. Этот timestamp path проверяется тем же syscall smoke: если получение
+времени начнёт выполнять traced syscall между hot-path marker-ами, проверка
+падает.
 
 0 heap allocations в zero-copy hot path доказываются integration test-ом
 `zero_copy_hot_path_does_not_allocate`. Тестовый бинарь устанавливает custom

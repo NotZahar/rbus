@@ -13,7 +13,7 @@ use crate::payload::PAYLOAD_SIZES;
 use crate::report::SuiteReport;
 use crate::system_metrics::monotonic_time_ns;
 use crate::topology::{ScenarioKind, TOPOLOGIES, Topology};
-use crate::transport_kind::{RBUS_TRANSPORTS, TransportKind};
+use crate::transport_kind::{SUITE_TRANSPORTS, TransportKind};
 use crate::wait_mode::{WAIT_MODES, WaitMode};
 use crate::worker::{
     LATENCY_PREFIX, RESULT_PREFIX, WorkerReport, WorkerRole, warmup_messages_per_publisher,
@@ -31,12 +31,11 @@ const WORKER_TIMEOUT_MS: u64 = 60_000;
 
 const _: () = assert!(DEPTH_MINIMUM.is_power_of_two());
 
-/// Benchmark metadata
 pub fn run_suite(options: &SuiteOptions) -> Result<SuiteReport, Warning> {
     let topologies = selected_topologies(options);
     let payload_sizes = selected_payload_sizes(options);
     let wait_modes = selected_wait_modes(options);
-    let transports = selected_transports(options);
+    let transports = SUITE_TRANSPORTS;
     let mut results = Vec::new();
     let mut run_index = 0_usize;
 
@@ -44,15 +43,17 @@ pub fn run_suite(options: &SuiteOptions) -> Result<SuiteReport, Warning> {
         for payload_size in payload_sizes {
             for wait_mode in wait_modes {
                 for transport in transports {
-                    results.push(run_topology(
-                        options,
-                        *topology,
-                        *payload_size,
-                        *wait_mode,
-                        *transport,
-                        run_index,
-                    )?);
-                    run_index = run_index.saturating_add(1);
+                    if transport.supports_scenario(topology.kind) {
+                        results.push(run_topology(
+                            options,
+                            *topology,
+                            *payload_size,
+                            *wait_mode,
+                            *transport,
+                            run_index,
+                        )?);
+                        run_index = run_index.saturating_add(1);
+                    }
                 }
             }
         }
@@ -75,7 +76,6 @@ pub fn run_suite(options: &SuiteOptions) -> Result<SuiteReport, Warning> {
     ))
 }
 
-/// Benchmark metadata
 pub fn print_suite_report(report: &SuiteReport, output_format: OutputFormat) {
     match output_format {
         OutputFormat::Json => println!("{}", report.to_json()),
@@ -97,7 +97,11 @@ fn run_topology(
     let ready_directory = ready_directory(run_index);
     create_ready_directory(&ready_directory)?;
     let startup_started_at = monotonic_time_ns()?;
-    let daemon = DaemonProcess::start(&domain)?;
+    let _daemon = if transport.is_rbus() {
+        Some(DaemonProcess::start(&domain)?)
+    } else {
+        None
+    };
     let startup_latency_ns = monotonic_time_ns()?.saturating_sub(startup_started_at);
     let depth = depth_for(options.messages_per_publisher);
     let scenario_context = ScenarioContext {
@@ -119,7 +123,6 @@ fn run_topology(
         ScenarioKind::CrashSubscriber => run_crash_subscriber(scenario_context)?,
         ScenarioKind::CrashPublisher => run_crash_publisher(scenario_context)?,
     };
-    drop(daemon);
     remove_ready_directory(&ready_directory)?;
     Ok(result)
 }
@@ -132,6 +135,7 @@ fn run_one_way(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning>
         subscribers.push(spawn_worker(worker_arguments(
             context,
             WorkerRole::Subscriber,
+            subscriber_index,
             Some(&ready_file),
         ))?);
     }
@@ -139,10 +143,11 @@ fn run_one_way(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning>
     let attach_latency_ns = monotonic_time_ns()?.saturating_sub(attach_started_at);
     let wall_started_at = monotonic_time_ns()?;
     let mut publishers = Vec::new();
-    for _publisher_index in 0..context.topology.publisher_count {
+    for publisher_index in 0..context.topology.publisher_count {
         publishers.push(spawn_worker(worker_arguments(
             context,
             WorkerRole::Publisher,
+            publisher_index,
             None,
         ))?);
     }
@@ -169,12 +174,18 @@ fn run_ping_pong(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warnin
     let responder = spawn_worker(worker_arguments(
         context,
         WorkerRole::PingResponder,
+        0,
         Some(&ready_file),
     ))?;
     wait_ready_files(context.ready_directory, 1)?;
     let attach_latency_ns = monotonic_time_ns()?.saturating_sub(attach_started_at);
     let wall_started_at = monotonic_time_ns()?;
-    let requester = spawn_worker(worker_arguments(context, WorkerRole::PingRequester, None))?;
+    let requester = spawn_worker(worker_arguments(
+        context,
+        WorkerRole::PingRequester,
+        0,
+        None,
+    ))?;
     let requester_output = parse_worker_output(wait_for_worker(requester, false)?)?;
     let responder_output = parse_worker_output(wait_for_worker(responder, false)?)?;
     let wall_time_ns = monotonic_time_ns()?.saturating_sub(wall_started_at);
@@ -192,11 +203,12 @@ fn run_crash_subscriber(context: ScenarioContext<'_>) -> Result<BenchmarkResult,
     let crash_subscriber = spawn_worker(worker_arguments(
         context,
         WorkerRole::CrashSubscriber,
+        0,
         Some(&ready_file),
     ))?;
     wait_ready_files(context.ready_directory, 1)?;
     let wall_started_at = monotonic_time_ns()?;
-    let publisher = spawn_worker(worker_arguments(context, WorkerRole::Publisher, None))?;
+    let publisher = spawn_worker(worker_arguments(context, WorkerRole::Publisher, 0, None))?;
     let publisher_output = parse_worker_output(wait_for_worker(publisher, false)?)?;
     let _crash_output = wait_for_worker(crash_subscriber, true)?;
     let wall_time_ns = monotonic_time_ns()?.saturating_sub(wall_started_at);
@@ -208,12 +220,17 @@ fn run_crash_publisher(context: ScenarioContext<'_>) -> Result<BenchmarkResult, 
     let subscriber = spawn_worker(worker_arguments(
         context,
         WorkerRole::Subscriber,
+        0,
         Some(&ready_file),
     ))?;
     wait_ready_files(context.ready_directory, 1)?;
     let wall_started_at = monotonic_time_ns()?;
-    let crash_publisher =
-        spawn_worker(worker_arguments(context, WorkerRole::CrashPublisher, None))?;
+    let crash_publisher = spawn_worker(worker_arguments(
+        context,
+        WorkerRole::CrashPublisher,
+        0,
+        None,
+    ))?;
     let _crash_output = wait_for_worker(crash_publisher, true)?;
     let subscriber_output = parse_worker_output(wait_for_worker(subscriber, false)?)?;
     let wall_time_ns = monotonic_time_ns()?.saturating_sub(wall_started_at);
@@ -278,6 +295,7 @@ fn aggregate_result(
 fn worker_arguments(
     context: ScenarioContext<'_>,
     role: WorkerRole,
+    worker_index: u8,
     ready_file: Option<&Path>,
 ) -> Vec<String> {
     let mut arguments = vec![
@@ -293,8 +311,12 @@ fn worker_arguments(
         context.payload_size.to_string(),
         String::from("--depth"),
         context.depth.to_string(),
+        String::from("--worker-index"),
+        worker_index.to_string(),
         String::from("--publisher-count"),
         context.topology.publisher_count.to_string(),
+        String::from("--subscriber-count"),
+        context.topology.subscriber_count.to_string(),
         String::from("--messages"),
         context.options.messages_per_publisher.to_string(),
         String::from("--wait-mode"),
@@ -502,14 +524,6 @@ fn selected_wait_modes(options: &SuiteOptions) -> &'static [WaitMode] {
         &WAIT_MODES[..1]
     } else {
         WAIT_MODES
-    }
-}
-
-fn selected_transports(options: &SuiteOptions) -> &'static [TransportKind] {
-    if options.matrix_smoke {
-        &RBUS_TRANSPORTS[..1]
-    } else {
-        RBUS_TRANSPORTS
     }
 }
 

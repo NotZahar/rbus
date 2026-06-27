@@ -42,6 +42,8 @@ subscriber получает `WarningCode::SubscriberLimitReached`. Payload не 
 subscriber не читает историю stream-ов, которые уже существовали до его
 регистрации. Если publisher появляется после регистрации subscriber-а, первое
 сообщение этого publisher-а должно быть доступно subscriber-у.
+`MessageRef::timestamp_ns()` возвращает monotonic timestamp, записанный publisher
+при commit сообщения перед release-store в `state_seq`.
 
 Crash publisher-а не инвалидирует уже attached `Subscriber`: stream остаётся
 валидным mmap segment-ом, но `Stats.publisher_alive` для него становится

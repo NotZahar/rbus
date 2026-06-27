@@ -1,8 +1,10 @@
+pub mod baseline_ipc;
+pub(crate) mod baseline_paths;
 pub mod pipe;
 pub mod posix_mq;
+pub(crate) mod posix_queue;
 pub mod rbus_loaned;
 pub mod rbus_publish_bytes;
-pub mod ros2_external;
 pub mod tcp_loopback;
 pub mod unix_socket;
 
@@ -14,5 +16,4 @@ pub const TRANSPORT_NAMES: &[&str] = &[
     pipe::TRANSPORT_NAME,
     tcp_loopback::TRANSPORT_NAME,
     posix_mq::TRANSPORT_NAME,
-    ros2_external::TRANSPORT_NAME,
 ];

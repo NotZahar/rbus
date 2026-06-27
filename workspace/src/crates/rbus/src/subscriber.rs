@@ -15,7 +15,7 @@ use rbus_ipc::topic_wait::TopicWaitSegment;
 
 use crate::control::{AttachedStream, attach_streams, notify_stream_added, wait_stream_added};
 use crate::message_ref::MessageRef;
-use crate::stream::StreamInner;
+use crate::stream::{ReadAttempt, StreamInner};
 use crate::wait::ReceiveWaitStatus;
 
 const COMPONENT_RBUS: &str = "rbus";
@@ -167,14 +167,25 @@ impl Subscriber {
         for offset in 0..streams.len() {
             let stream_index = (start_index + offset) % streams.len();
             let subscriber_stream = &mut streams[stream_index];
-            if let Some(read_reservation) = subscriber_stream
+            match subscriber_stream
                 .stream
                 .try_read_message(subscriber_stream.cursor, self.subscriber_id)?
             {
-                subscriber_stream.cursor = subscriber_stream.cursor.next();
-                self.next_stream_index
-                    .set((stream_index + 1) % streams.len());
-                return Ok(Some(MessageRef::from_reservation(read_reservation)));
+                ReadAttempt::Empty => {}
+                ReadAttempt::Message(read_reservation) => {
+                    subscriber_stream.cursor = subscriber_stream.cursor.next();
+                    self.next_stream_index
+                        .set((stream_index + 1) % streams.len());
+                    return Ok(Some(MessageRef::from_reservation(read_reservation)));
+                }
+                ReadAttempt::Skipped {
+                    next_sequence,
+                    warning,
+                } => {
+                    subscriber_stream.cursor = next_sequence;
+                    self.next_stream_index.set(stream_index);
+                    return Err(warning);
+                }
             }
         }
         Ok(None)

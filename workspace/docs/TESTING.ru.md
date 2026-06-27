@@ -87,11 +87,14 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | `mmap MAP_SHARED` | `crates/rbus-ipc/src/mmap.rs` | `crates/rbus-ipc/tests/mmap_tests.rs` |
 | `SCM_RIGHTS` FD passing | `crates/rbus-ipc/src/scm_rights.rs` | `crates/rbus-ipc/tests/scm_rights_tests.rs` |
 | `futex` wake/warning path | `crates/rbus-ipc/src/futex.rs` | `crates/rbus-ipc/tests/futex_tests.rs` |
+| Commit timestamp metadata | `crates/rbus/src/stream.rs` | `loaned_publish_makes_payload_visible_to_subscriber` |
 | mmap-backed stream header | `crates/rbus/src/stream.rs` | `stream_initializes_shared_memory_segment_header` |
 | Atomic slot protocols | `crates/rbus-core/src/atomic/ordering.rs`, `crates/rbus/src/stream.rs` | `crates/rbus-core/tests/atomic_protocol_model_tests.rs` |
+| Gap handling продвигает subscriber cursor | `crates/rbus/src/{stream.rs,subscriber.rs}` | `subscriber_cursor_moves_to_oldest_available_message_after_gap_warning` |
 | 0 allocations в zero-copy hot path | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `zero_copy_hot_path_does_not_allocate` |
 | 0 syscalls в non-blocking hot path | `crates/rbus-bench/src/hot_path_syscall.rs` | `workspace/scripts/hot-path-syscall-smoke.ts` |
 | Multi-process benchmark suite smoke | `crates/rbus-bench/src/{suite.rs,worker.rs}` | `bench_suite_matrix_smoke_outputs_csv` |
+| Local IPC benchmark baselines | `crates/rbus-bench/src/transports/{baseline_ipc.rs,baseline_paths.rs,posix_queue.rs}` | `bench_suite_matrix_smoke_outputs_csv` |
 | Cross-process rbus data plane | `crates/rbus/src/control.rs`, `crates/rbusd/src/registry.rs` | `crates/rbus/tests/cross_process_data_plane_tests.rs` |
 | Workspace examples | `examples/*.rs`, `examples/src/lib.rs` | `examples/tests/examples_tests.rs` |
 | Crash recovery data plane | `crates/rbus-ipc/src/stream_segment.rs`, `crates/rbusd/src/registry.rs`, `crates/rbus/src/stream.rs` | `crates/rbus/tests/crash_recovery_tests.rs` |

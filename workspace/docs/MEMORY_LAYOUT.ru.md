@@ -14,6 +14,9 @@ Writer публикует payload и metadata до release-store в `state_seq`.
 `state_seq`, CAS-ом выставляет свой bit в `readers_mask`, затем повторно
 проверяет `state_seq`. Старший bit `readers_mask` зарезервирован под writer
 claim, поэтому stream поддерживает до 63 subscriber reader bits.
+`SlotHeader.timestamp_ns` заполняется monotonic timestamp-ом на commit path до
+release-store в `state_seq`; после успешного pin reader читает тот же metadata
+snapshot через `MessageRef::timestamp_ns()`.
 
 Перед выдачей loan-а writer CAS-ом переводит `readers_mask` из `0` в writer
 claim bit, затем переводит `state_seq` в writing state. Claim bit удерживается

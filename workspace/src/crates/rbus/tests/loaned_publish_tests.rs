@@ -2,6 +2,8 @@ use rbus::{Bus, TopicConfig};
 
 mod common;
 
+const INITIAL_SLOT_TIMESTAMP_NS: u64 = 0;
+
 #[test]
 fn loaned_publish_makes_payload_visible_to_subscriber() {
     let daemon = common::DaemonProcess::start("loaned-publish");
@@ -23,4 +25,5 @@ fn loaned_publish_makes_payload_visible_to_subscriber() {
         .expect("message should be available");
     assert_eq!(received_message.sequence(), sequence);
     assert_eq!(received_message.as_slice(), &[1, 2, 3, 4]);
+    assert!(received_message.timestamp_ns() > INITIAL_SLOT_TIMESTAMP_NS);
 }

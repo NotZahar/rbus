@@ -9,8 +9,7 @@
 
 ## Ограничения
 
-- ROS2 bridge намеренно отсутствует.
-- DDS/ROS2 runtime-зависимости не используются.
+- Внешние middleware runtime-зависимости не используются.
 - Сетевой транспорт не входит в runtime rbus.
 - Public API не содержит async, callback, serde, QoS builder, C/Python bindings.
 

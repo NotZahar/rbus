@@ -17,9 +17,7 @@ const RECV_TIMEOUT_MS: u64 = 5_000;
 const TIMESTAMP_BYTES: usize = core::mem::size_of::<u64>();
 const WARMUP_MESSAGES_PER_PUBLISHER: u32 = 2;
 
-/// Benchmark metadata
 pub const LATENCY_PREFIX: &str = "RBUS_BENCH_LATENCY_NS ";
-/// Benchmark metadata
 pub const RESULT_PREFIX: &str = "RBUS_BENCH_WORKER_RESULT ";
 
 const _: () = assert!(TIMESTAMP_BYTES <= 64);
@@ -56,8 +54,10 @@ pub struct WorkerArguments {
     pub payload_size: usize,
     /// Depth ring buffer
     pub depth: usize,
+    pub worker_index: u8,
     /// Publisher runtime metadata
     pub publisher_count: u8,
+    pub subscriber_count: u8,
     /// Publisher runtime metadata
     pub messages_per_publisher: u32,
     /// Wait mode
@@ -137,7 +137,9 @@ impl WorkerArguments {
                 "--response-topic" => parsed.response_topic = Some(next_argument(&mut iterator)?),
                 "--payload-size" => parsed.payload_size = Some(parse_next(&mut iterator)?),
                 "--depth" => parsed.depth = Some(parse_next(&mut iterator)?),
+                "--worker-index" => parsed.worker_index = Some(parse_next(&mut iterator)?),
                 "--publisher-count" => parsed.publisher_count = Some(parse_next(&mut iterator)?),
+                "--subscriber-count" => parsed.subscriber_count = Some(parse_next(&mut iterator)?),
                 "--messages" => parsed.messages_per_publisher = Some(parse_next(&mut iterator)?),
                 "--wait-mode" => {
                     let value = next_argument(&mut iterator)?;
@@ -162,6 +164,10 @@ impl WorkerArguments {
 /// Benchmark metadata
 pub fn run_worker(arguments: WorkerArguments) -> Result<(), Warning> {
     validate_worker_arguments(&arguments)?;
+    if let Some(report) = crate::transports::baseline_ipc::run_worker(&arguments)? {
+        print_report(arguments.role, report);
+        return Ok(());
+    }
     match arguments.role {
         WorkerRole::Publisher => {
             print_report(arguments.role, run_publisher(&arguments)?);
@@ -394,6 +400,7 @@ fn publish_timestamped(
             encode_timestamp(publish_bytes_buffer, timestamp_ns)?;
             let _sequence = publisher.publish_bytes(publish_bytes_buffer)?;
         }
+        _ => return Err(invalid_argument()),
     }
     Ok(())
 }
@@ -482,7 +489,9 @@ fn validate_worker_arguments(arguments: &WorkerArguments) -> Result<(), Warning>
         || arguments.payload_size < TIMESTAMP_BYTES
         || arguments.depth == 0
         || !arguments.depth.is_power_of_two()
+        || arguments.worker_index >= arguments.publisher_count.max(arguments.subscriber_count)
         || arguments.publisher_count == 0
+        || arguments.subscriber_count == 0
         || arguments.messages_per_publisher == 0
     {
         return Err(invalid_argument());
@@ -540,7 +549,9 @@ struct WorkerArgumentBuilder {
     response_topic: Option<String>,
     payload_size: Option<usize>,
     depth: Option<usize>,
+    worker_index: Option<u8>,
     publisher_count: Option<u8>,
+    subscriber_count: Option<u8>,
     messages_per_publisher: Option<u32>,
     wait_mode: Option<WaitMode>,
     transport: Option<TransportKind>,
@@ -557,7 +568,9 @@ impl WorkerArgumentBuilder {
             response_topic: Some(String::new()),
             payload_size: None,
             depth: None,
+            worker_index: None,
             publisher_count: None,
+            subscriber_count: None,
             messages_per_publisher: None,
             wait_mode: None,
             transport: None,
@@ -574,7 +587,9 @@ impl WorkerArgumentBuilder {
             response_topic: self.response_topic.ok_or_else(invalid_argument)?,
             payload_size: self.payload_size.ok_or_else(invalid_argument)?,
             depth: self.depth.ok_or_else(invalid_argument)?,
+            worker_index: self.worker_index.ok_or_else(invalid_argument)?,
             publisher_count: self.publisher_count.ok_or_else(invalid_argument)?,
+            subscriber_count: self.subscriber_count.ok_or_else(invalid_argument)?,
             messages_per_publisher: self.messages_per_publisher.ok_or_else(invalid_argument)?,
             wait_mode: self.wait_mode.ok_or_else(invalid_argument)?,
             transport: self.transport.ok_or_else(invalid_argument)?,

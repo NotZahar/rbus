@@ -15,6 +15,7 @@ use rbus_core::ring::state::{
 use rbus_core::sequence::Sequence;
 use rbus_core::stats::{Stats, StreamCounters};
 use rbus_core::warning::{Warning, WarningCode};
+use rbus_ipc::clock::monotonic_timestamp_ns;
 use rbus_ipc::fd::OwnedFileDescriptor;
 use rbus_ipc::mmap::MappedRegion;
 use rbus_ipc::stream_segment::{StreamSegmentMetadata, map_stream_segment};
@@ -164,6 +165,13 @@ impl StreamInner {
         sequence: Sequence,
         length: usize,
     ) -> Result<(), Warning> {
+        let timestamp_ns = match monotonic_timestamp_ns() {
+            Ok(timestamp_ns) => timestamp_ns,
+            Err(warning) => {
+                self.rollback_loan(slot_index);
+                return Err(warning);
+            }
+        };
         let slot_pointer = self.slot_header_pointer(slot_index);
         // SAFETY: Required invariants are upheld
         // Invariants:
@@ -174,7 +182,7 @@ impl StreamInner {
         unsafe {
             (*slot_pointer).len = length as u32;
             (*slot_pointer).flags = 0;
-            (*slot_pointer).timestamp_ns = 0;
+            (*slot_pointer).timestamp_ns = timestamp_ns;
         }
         self.slot_header(slot_index)
             .state_seq
@@ -216,10 +224,10 @@ impl StreamInner {
         self: &Arc<Self>,
         expected_sequence: Sequence,
         subscriber_id: SubscriberId,
-    ) -> Result<Option<ReadReservation>, Warning> {
+    ) -> Result<ReadAttempt, Warning> {
         let current_write_sequence = self.current_write_sequence();
         if expected_sequence >= current_write_sequence {
-            return Ok(None);
+            return Ok(ReadAttempt::Empty);
         }
 
         let depth_as_u64 = self.layout.depth as u64;
@@ -228,46 +236,44 @@ impl StreamInner {
             .saturating_sub(expected_sequence.as_u64())
             > depth_as_u64
         {
-            self.stream_counters()
-                .skipped_messages
-                .fetch_add(1, COUNTER_ORDERING);
-            self.stream_counters().increment_warnings_total();
-            return Err(Warning::new(
-                WarningCode::MessagesSkipped,
-                COMPONENT_RBUS,
+            let next_sequence =
+                Sequence::new(current_write_sequence.as_u64().saturating_sub(depth_as_u64));
+            let skipped_message_count = expected_sequence.skipped_messages_before(next_sequence);
+            return Ok(self.messages_skipped(
+                expected_sequence,
+                next_sequence,
+                skipped_message_count,
                 "Subscriber::try_recv",
-            )
-            .with_sequence(expected_sequence)
-            .with_topic_hash(self.topic_hash));
+            ));
         }
 
         let slot_index = expected_sequence.slot_index(self.layout.depth);
         let slot = self.slot_header(slot_index);
         let state_sequence = slot.state_seq.load(SLOT_PROTOCOL_ORDERING);
         if !is_committed_state(state_sequence) {
-            return Ok(None);
+            return Ok(ReadAttempt::Empty);
         }
 
         let observed_sequence = decode_sequence(state_sequence);
         if observed_sequence != expected_sequence {
-            self.stream_counters()
-                .skipped_messages
-                .fetch_add(1, COUNTER_ORDERING);
-            self.stream_counters().increment_warnings_total();
-            return Err(Warning::new(
-                WarningCode::MessagesSkipped,
-                COMPONENT_RBUS,
-                "Subscriber::try_recv",
-            )
-            .with_sequence(expected_sequence)
-            .with_topic_hash(self.topic_hash));
+            if observed_sequence > expected_sequence {
+                let skipped_message_count =
+                    expected_sequence.skipped_messages_before(observed_sequence);
+                return Ok(self.messages_skipped(
+                    expected_sequence,
+                    observed_sequence,
+                    skipped_message_count,
+                    "Subscriber::try_recv",
+                ));
+            }
+            return Ok(ReadAttempt::Empty);
         }
 
         let reader_bit = reader_bit_mask(subscriber_id)?;
         let mut readers_mask = slot.readers_mask.load(SLOT_PROTOCOL_ORDERING);
         loop {
             if readers_mask & SLOT_WRITER_CLAIM_BIT != 0 {
-                return Ok(None);
+                return Ok(ReadAttempt::Empty);
             }
             match slot.readers_mask.compare_exchange(
                 readers_mask,
@@ -283,23 +289,26 @@ impl StreamInner {
         if state_after_pin != state_sequence {
             slot.readers_mask
                 .fetch_and(!reader_bit, SLOT_PROTOCOL_ORDERING);
-            self.stream_counters()
-                .skipped_messages
-                .fetch_add(1, COUNTER_ORDERING);
-            self.stream_counters().increment_warnings_total();
-            return Err(Warning::new(
-                WarningCode::MessagesSkipped,
-                COMPONENT_RBUS,
-                "Subscriber::try_recv::repin",
-            )
-            .with_sequence(expected_sequence)
-            .with_topic_hash(self.topic_hash));
+            if is_committed_state(state_after_pin) {
+                let observed_sequence_after_pin = decode_sequence(state_after_pin);
+                if observed_sequence_after_pin > expected_sequence {
+                    let skipped_message_count =
+                        expected_sequence.skipped_messages_before(observed_sequence_after_pin);
+                    return Ok(self.messages_skipped(
+                        expected_sequence,
+                        observed_sequence_after_pin,
+                        skipped_message_count,
+                        "Subscriber::try_recv::repin",
+                    ));
+                }
+            }
+            return Ok(ReadAttempt::Empty);
         }
 
         self.stream_counters()
             .received_messages
             .fetch_add(1, COUNTER_ORDERING);
-        Ok(Some(ReadReservation {
+        Ok(ReadAttempt::Message(ReadReservation {
             stream: Arc::clone(self),
             slot_index,
             reader_bit,
@@ -314,6 +323,25 @@ impl StreamInner {
         self.slot_header(slot_index)
             .readers_mask
             .fetch_and(!reader_bit, READER_MASK_UPDATE_ORDERING);
+    }
+
+    fn messages_skipped(
+        &self,
+        expected_sequence: Sequence,
+        next_sequence: Sequence,
+        skipped_message_count: u64,
+        operation: &'static str,
+    ) -> ReadAttempt {
+        self.stream_counters()
+            .skipped_messages
+            .fetch_add(skipped_message_count, COUNTER_ORDERING);
+        self.stream_counters().increment_warnings_total();
+        ReadAttempt::Skipped {
+            next_sequence,
+            warning: Warning::new(WarningCode::MessagesSkipped, COMPONENT_RBUS, operation)
+                .with_sequence(expected_sequence)
+                .with_topic_hash(self.topic_hash),
+        }
     }
 
     fn publisher_alive(&self) -> bool {
@@ -394,6 +422,15 @@ pub(crate) struct ReadReservation {
     pub(crate) length: usize,
     pub(crate) timestamp_ns: u64,
     pub(crate) payload_pointer: *const u8,
+}
+
+pub(crate) enum ReadAttempt {
+    Empty,
+    Message(ReadReservation),
+    Skipped {
+        next_sequence: Sequence,
+        warning: Warning,
+    },
 }
 
 #[cfg(test)]

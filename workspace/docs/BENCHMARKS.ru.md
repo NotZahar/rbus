@@ -27,7 +27,7 @@ Smoke report содержит:
 
 ```text
 cargo run -p rbus-bench -- --smoke
-{"status":"ok","warning_count":0,"scenario_count":10,"transport_count":7,"payload_size_count":10,"process_id":1,"pinning_enabled":false,"publisher_count":1,"subscriber_count":1,"messages_per_second":0,"blocking_wait_wake_latency_ns":19795}
+{"status":"ok","warning_count":0,"scenario_count":10,"transport_count":6,"payload_size_count":10,"process_id":1,"pinning_enabled":false,"publisher_count":1,"subscriber_count":1,"messages_per_second":0,"blocking_wait_wake_latency_ns":19795}
 ```
 
 Smoke benchmark подтверждает, что blocking wait path проходит через kernel
@@ -35,10 +35,12 @@ Smoke benchmark подтверждает, что blocking wait path проход
 `sleep`. Значение latency является smoke-метрикой конкретного контейнерного
 прогона, а не стабильным SLA.
 
-Полный suite создаёт новый domain rbus, запускает `rbusd`, затем поднимает
-worker-процессы `publisher`, `subscriber`, `ping-responder`, `ping-requester` и
-crash roles через hidden режим `--suite-worker`. Payload не проходит через
-daemon; worker-ы общаются через обычный public API `Bus`/`Publisher`/`Subscriber`.
+Полный suite поднимает worker-процессы `publisher`, `subscriber`,
+`ping-responder`, `ping-requester` и crash roles через hidden режим
+`--suite-worker`. Для `rbus-loaned` и `rbus-publish-bytes` suite создаёт новый
+domain rbus и запускает `rbusd`; payload не проходит через daemon, worker-ы
+общаются через public API `Bus`/`Publisher`/`Subscriber`. Для baseline transport-ов
+worker-ы используют собственные endpoints без `rbusd`.
 
 Обязательная матрица:
 
@@ -47,7 +49,13 @@ daemon; worker-ы общаются через обычный public API `Bus`/`P
 - topologies: 1/1, 1/2, 1/4, 2/1, 4/1, 4/4, ping-pong, slow subscriber,
   subscriber crash с удержанным `MessageRef`, publisher crash;
 - wait modes: `busy-poll`, `recv`, `recv-timeout`;
-- rbus transports: `rbus-loaned`, `rbus-publish-bytes`.
+- transports: `rbus-loaned`, `rbus-publish-bytes`, `unix-socket`, `pipe`,
+  `tcp-loopback`, `posix-message-queue`.
+
+Crash-сценарии запускаются только для `rbus-loaned` и `rbus-publish-bytes`,
+потому что проверяют lifecycle shared-memory stream-а и cleanup daemon-а.
+Локальные baseline transport-ы участвуют в one-way, ping-pong и slow subscriber
+сценариях.
 
 Suite report содержит p50/p90/p99/p99.9/p99.99 one-way latency, p50/p90/p99/p99.9
 round-trip latency, throughput, payload throughput GiB/sec, CPU time, RSS/PSS,
