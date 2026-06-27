@@ -1,0 +1,45 @@
+[package]
+name = "rbus-examples"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+rbus.workspace = true
+
+[dev-dependencies]
+rbus-ipc.workspace = true
+
+[lib]
+name = "rbus_examples"
+path = "src/lib.rs"
+
+[[bin]]
+name = "basic_pub"
+path = "basic_pub.rs"
+
+[[bin]]
+name = "basic_sub"
+path = "basic_sub.rs"
+
+[[bin]]
+name = "loaned_pub"
+path = "loaned_pub.rs"
+
+[[bin]]
+name = "multi_sub"
+path = "multi_sub.rs"
+
+[[bin]]
+name = "ping_pong"
+path = "ping_pong.rs"
+
+[[bin]]
+name = "slow_subscriber"
+path = "slow_subscriber.rs"

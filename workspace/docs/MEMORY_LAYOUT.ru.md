@@ -10,9 +10,15 @@
 `state_seq` кодирует sequence и writing bit: committed state хранит `sequence << 1`,
 writing state хранит `(sequence << 1) | 1`.
 
-Writer публикует payload и metadata до `Release` store в `state_seq`. Reader читает
-`state_seq` через `Acquire` load, выставляет bit в `readers_mask`, затем повторно
-проверяет `state_seq`.
+Writer публикует payload и metadata до release-store в `state_seq`. Reader читает
+`state_seq`, CAS-ом выставляет свой bit в `readers_mask`, затем повторно
+проверяет `state_seq`. Старший bit `readers_mask` зарезервирован под writer
+claim, поэтому stream поддерживает до 63 subscriber reader bits.
+
+Перед выдачей loan-а writer CAS-ом переводит `readers_mask` из `0` в writer
+claim bit, затем переводит `state_seq` в writing state. Claim bit удерживается
+до commit или rollback, поэтому reader не может закрепиться за slot-ом, пока
+publisher получил mutable payload.
 
 `SegmentHeader.flags` является `AtomicU64`. Начиная с ABI v2 bit
 `SEGMENT_FLAG_CLOSED` помечает stream закрытым после смерти publisher-а или

@@ -3,8 +3,9 @@ use std::sync::Arc;
 
 use rbus_core::atomic::ordering::{
     COUNTER_ORDERING, READER_MASK_UPDATE_ORDERING, READER_OBSERVE_ORDERING,
-    SEGMENT_FLAG_OBSERVE_ORDERING, WRITER_COMMIT_ORDERING,
+    SEGMENT_FLAG_OBSERVE_ORDERING, SLOT_PROTOCOL_ORDERING, WRITER_COMMIT_ORDERING,
 };
+use rbus_core::constants::SLOT_WRITER_CLAIM_BIT;
 use rbus_core::ids::{PublisherId, StreamId, SubscriberId, TopicHash};
 use rbus_core::layout::{SegmentHeader, SegmentLayout, SlotHeader};
 use rbus_core::ring::pin::reader_bit_mask;
@@ -121,7 +122,16 @@ impl StreamInner {
         let sequence = Sequence::new(self.segment_header().write_sequence.load(Ordering::Relaxed));
         let slot_index = sequence.slot_index(self.layout.depth);
         let slot = self.slot_header(slot_index);
-        if slot.readers_mask.load(READER_OBSERVE_ORDERING) != 0 {
+        if slot
+            .readers_mask
+            .compare_exchange(
+                0,
+                SLOT_WRITER_CLAIM_BIT,
+                SLOT_PROTOCOL_ORDERING,
+                SLOT_PROTOCOL_ORDERING,
+            )
+            .is_err()
+        {
             self.loan_in_progress.store(false, Ordering::Release);
             self.stream_counters()
                 .backpressure_pinned_slot
@@ -137,7 +147,7 @@ impl StreamInner {
         }
 
         slot.state_seq
-            .store(encode_writing_state(sequence), WRITER_COMMIT_ORDERING);
+            .store(encode_writing_state(sequence), SLOT_PROTOCOL_ORDERING);
 
         Ok(LoanReservation {
             stream: Arc::clone(self),
@@ -168,10 +178,13 @@ impl StreamInner {
         }
         self.slot_header(slot_index)
             .state_seq
-            .store(encode_committed_state(sequence), WRITER_COMMIT_ORDERING);
+            .store(encode_committed_state(sequence), SLOT_PROTOCOL_ORDERING);
         self.segment_header()
             .write_sequence
             .store(sequence.next().as_u64(), WRITER_COMMIT_ORDERING);
+        self.slot_header(slot_index)
+            .readers_mask
+            .fetch_and(!SLOT_WRITER_CLAIM_BIT, SLOT_PROTOCOL_ORDERING);
         self.stream_counters()
             .published_messages
             .fetch_add(1, COUNTER_ORDERING);
@@ -192,7 +205,10 @@ impl StreamInner {
         }
         self.slot_header(slot_index)
             .state_seq
-            .store(0, WRITER_COMMIT_ORDERING);
+            .store(0, SLOT_PROTOCOL_ORDERING);
+        self.slot_header(slot_index)
+            .readers_mask
+            .fetch_and(!SLOT_WRITER_CLAIM_BIT, SLOT_PROTOCOL_ORDERING);
         self.loan_in_progress.store(false, Ordering::Release);
     }
 
@@ -227,7 +243,7 @@ impl StreamInner {
 
         let slot_index = expected_sequence.slot_index(self.layout.depth);
         let slot = self.slot_header(slot_index);
-        let state_sequence = slot.state_seq.load(READER_OBSERVE_ORDERING);
+        let state_sequence = slot.state_seq.load(SLOT_PROTOCOL_ORDERING);
         if !is_committed_state(state_sequence) {
             return Ok(None);
         }
@@ -248,12 +264,25 @@ impl StreamInner {
         }
 
         let reader_bit = reader_bit_mask(subscriber_id)?;
-        slot.readers_mask
-            .fetch_or(reader_bit, READER_MASK_UPDATE_ORDERING);
-        let state_after_pin = slot.state_seq.load(READER_OBSERVE_ORDERING);
+        let mut readers_mask = slot.readers_mask.load(SLOT_PROTOCOL_ORDERING);
+        loop {
+            if readers_mask & SLOT_WRITER_CLAIM_BIT != 0 {
+                return Ok(None);
+            }
+            match slot.readers_mask.compare_exchange(
+                readers_mask,
+                readers_mask | reader_bit,
+                SLOT_PROTOCOL_ORDERING,
+                SLOT_PROTOCOL_ORDERING,
+            ) {
+                Ok(_) => break,
+                Err(observed_readers_mask) => readers_mask = observed_readers_mask,
+            }
+        }
+        let state_after_pin = slot.state_seq.load(SLOT_PROTOCOL_ORDERING);
         if state_after_pin != state_sequence {
             slot.readers_mask
-                .fetch_and(!reader_bit, READER_MASK_UPDATE_ORDERING);
+                .fetch_and(!reader_bit, SLOT_PROTOCOL_ORDERING);
             self.stream_counters()
                 .skipped_messages
                 .fetch_add(1, COUNTER_ORDERING);

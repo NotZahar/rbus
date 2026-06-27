@@ -16,7 +16,13 @@ pub const CONTROL_PROTOCOL_VERSION: u16 = 1;
 pub const CACHE_LINE_BYTES: usize = 64;
 
 /// Subscriber runtime metadata
-pub const MAX_SUBSCRIBERS_PER_STREAM: u8 = 64;
+pub const SLOT_WRITER_CLAIM_SHIFT: u32 = u64::BITS - 1;
+
+/// Subscriber runtime metadata
+pub const SLOT_WRITER_CLAIM_BIT: u64 = 1_u64 << SLOT_WRITER_CLAIM_SHIFT;
+
+/// Subscriber runtime metadata
+pub const MAX_SUBSCRIBERS_PER_STREAM: u8 = SLOT_WRITER_CLAIM_SHIFT as u8;
 
 /// Internal documentation
 pub const DEFAULT_MAX_MESSAGE_SIZE: usize = 8 * 1024 * 1024;

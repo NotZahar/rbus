@@ -30,6 +30,12 @@ Lint policy:
 - workspace lint `dead_code = "deny"`;
 - crate-level `allow(dead_code)` запрещён.
 
+Loom/model tests находятся в `crates/rbus-core/tests/atomic_protocol_model_tests.rs`.
+Они перебирают interleaving-и atomic data plane protocol-ов: reader pin против
+writer overwrite, commit `Release` против observe `Acquire`, cleanup/drop против
+одного reader bit. Эти тесты запускаются обычным `cargo test --workspace
+--all-features` и не требуют отдельного feature flag.
+
 Regression suite `crates/rbus/tests/cross_process_data_plane_tests.rs`
 поднимает `rbusd`, publishers и subscribers как разные OS process-ы; parent
 process только оркестрирует stdin/stdout child-ов и не участвует в data plane.
@@ -39,6 +45,12 @@ publisher-а через attach уже существующего stream-а, fan-
 Publisher child держит control session открытой до явной команды `exit`, поэтому
 lifecycle cleanup не удаляет stream раньше проверки subscriber-ом. Process-local
 registry в этих тестах не может скрыть ошибку.
+
+Example regression suite `examples/tests/examples_tests.rs` подключена к
+workspace через package `rbus-examples`. Она поднимает настоящий `rbusd`,
+запускает bin-target-ы `basic_pub`, `basic_sub`, `loaned_pub`, `multi_sub`,
+`ping_pong` и `slow_subscriber` как отдельные OS process-ы и проверяет, что они
+обмениваются payload через публичный API без fallback-ов.
 
 Lifecycle registry проверяется отдельными тестами:
 `subscriber_id_is_reused_after_session_close` закрывает subscriber session без
@@ -76,10 +88,12 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | `SCM_RIGHTS` FD passing | `crates/rbus-ipc/src/scm_rights.rs` | `crates/rbus-ipc/tests/scm_rights_tests.rs` |
 | `futex` wake/warning path | `crates/rbus-ipc/src/futex.rs` | `crates/rbus-ipc/tests/futex_tests.rs` |
 | mmap-backed stream header | `crates/rbus/src/stream.rs` | `stream_initializes_shared_memory_segment_header` |
+| Atomic slot protocols | `crates/rbus-core/src/atomic/ordering.rs`, `crates/rbus/src/stream.rs` | `crates/rbus-core/tests/atomic_protocol_model_tests.rs` |
 | 0 allocations в zero-copy hot path | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `zero_copy_hot_path_does_not_allocate` |
 | 0 syscalls в non-blocking hot path | `crates/rbus-bench/src/hot_path_syscall.rs` | `workspace/scripts/hot-path-syscall-smoke.ts` |
 | Multi-process benchmark suite smoke | `crates/rbus-bench/src/{suite.rs,worker.rs}` | `bench_suite_matrix_smoke_outputs_csv` |
 | Cross-process rbus data plane | `crates/rbus/src/control.rs`, `crates/rbusd/src/registry.rs` | `crates/rbus/tests/cross_process_data_plane_tests.rs` |
+| Workspace examples | `examples/*.rs`, `examples/src/lib.rs` | `examples/tests/examples_tests.rs` |
 | Crash recovery data plane | `crates/rbus-ipc/src/stream_segment.rs`, `crates/rbusd/src/registry.rs`, `crates/rbus/src/stream.rs` | `crates/rbus/tests/crash_recovery_tests.rs` |
 | rbusd smoke state | `crates/rbusd/src/daemon.rs` | `crates/rbusd/tests/daemon_start_tests.rs` |
 | rbusd Unix socket HELLO/INSPECT | `crates/rbusd/src/daemon.rs` | `crates/rbusd/tests/control_plane_tests.rs` |

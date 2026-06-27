@@ -34,7 +34,9 @@ memory и удаляет publisher stream из registry.
 `NOTIFY_STREAM_ADDED`. Subscriber держит persistent control session открытой до
 `Drop`; после закрытия session `rbusd` освобождает `subscriber_id` для будущих
 регистраций и очищает reader bit этого subscriber-а из уже опубликованных
-slot-ов. Payload не проходит через daemon.
+slot-ов. Один stream поддерживает до 63 active subscribers; следующий
+subscriber получает `WarningCode::SubscriberLimitReached`. Payload не проходит
+через daemon.
 
 `Subscriber` получает сообщения из stream-ов, attached к topic. Новый
 subscriber не читает историю stream-ов, которые уже существовали до его
@@ -48,3 +50,21 @@ Crash publisher-а не инвалидирует уже attached `Subscriber`: s
 
 `UNREGISTER` остаётся внутренней runtime-командой control protocol-а и не
 расширяет публичный API crate `rbus`.
+
+## Примеры
+
+Исполняемые примеры вынесены в отдельный workspace package `examples` рядом с
+`crates`. Cargo target-ы:
+
+- `basic_pub` — публикация payload через `Publisher::publish_bytes`;
+- `basic_sub` — blocking receive одного сообщения через `recv_timeout`;
+- `loaned_pub` — zero-copy loan, запись в `LoanedMessage` и commit через
+  `Publisher::publish`;
+- `multi_sub` — последовательное чтение нескольких сообщений одного topic-а;
+- `ping_pong` — round-trip из двух process-ов с ролями `server` и `client`;
+- `slow_subscriber` — медленный consumer loop без fallback-ов и без скрытого
+  запуска daemon-а.
+
+Все примеры требуют уже запущенный `rbusd` и явные параметры `--domain`,
+`--topic` или пары topic-ов. Любая ошибка API, timeout или warning завершает
+пример с ненулевым кодом и stacktrace.

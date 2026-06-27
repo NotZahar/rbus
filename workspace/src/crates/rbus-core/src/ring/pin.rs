@@ -1,6 +1,6 @@
 //! Internal documentation
 
-use crate::constants::{COMPONENT_CORE, MAX_SUBSCRIBERS_PER_STREAM};
+use crate::constants::{COMPONENT_CORE, MAX_SUBSCRIBERS_PER_STREAM, SLOT_WRITER_CLAIM_BIT};
 use crate::ids::SubscriberId;
 use crate::result::RbusResult;
 use crate::warning::{Warning, WarningCode};
@@ -19,5 +19,10 @@ pub fn reader_bit_mask(subscriber_id: SubscriberId) -> RbusResult<u64> {
 
 /// Internal documentation
 pub const fn has_pinned_readers(readers_mask: u64) -> bool {
-    readers_mask != 0
+    readers_mask & !SLOT_WRITER_CLAIM_BIT != 0
+}
+
+/// Internal documentation
+pub const fn has_writer_claim(readers_mask: u64) -> bool {
+    readers_mask & SLOT_WRITER_CLAIM_BIT != 0
 }

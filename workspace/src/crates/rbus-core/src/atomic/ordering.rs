@@ -6,6 +6,9 @@ use core::sync::atomic::Ordering;
 pub const WRITER_COMMIT_ORDERING: Ordering = Ordering::Release;
 
 /// Internal documentation
+pub const SLOT_PROTOCOL_ORDERING: Ordering = Ordering::SeqCst;
+
+/// Internal documentation
 pub const READER_OBSERVE_ORDERING: Ordering = Ordering::Acquire;
 
 /// Payload metadata
