@@ -12,6 +12,7 @@ use crate::domain::domain_socket_path;
 use crate::inspect::inspect_domain;
 use crate::registry::DaemonRegistry;
 use crate::registry_types::NotifyStreamAddedResult;
+use crate::reregister::{reregister_publisher_response, reregister_subscriber_response};
 use crate::signal::should_stop;
 use crate::smoke::run_smoke_daemon;
 use crate::stats::{daemon_stats_snapshot, format_stats_response};
@@ -22,7 +23,8 @@ use rbus_core::ids::{PublisherId, SubscriberId, TopicHash};
 use rbus_core::warning::{Warning, WarningCode};
 use rbus_ipc::control::FrameHeader;
 use rbus_ipc::control::io::{
-    CONTROL_FLAG_JSON, ControlFrame, read_control_frame, write_control_frame_with_file_descriptors,
+    CONTROL_FLAG_JSON, ControlFrame, ControlFrameWithFileDescriptors,
+    read_control_frame_with_file_descriptors, write_control_frame_with_file_descriptors,
 };
 use rbus_ipc::control::messages::{
     AttachStreamsRequest, NOTIFY_STREAM_ADDED_INFINITE_WAIT_NS, NOTIFY_STREAM_ADDED_NO_WAIT_NS,
@@ -33,6 +35,7 @@ use rbus_ipc::control::opcode::Opcode;
 use rbus_ipc::unix_socket::bind_unix_listener;
 
 const MAX_CONTROL_REQUEST_PAYLOAD: usize = 4096;
+const MAX_CONTROL_REQUEST_FILE_DESCRIPTORS: usize = 2;
 const MAX_CONTROL_RESPONSE_PAYLOAD: usize = 64 * 1024;
 const FIRST_SESSION_ID: u64 = 1;
 const RBUSD_FATAL_EXIT_CODE: i32 = 2;
@@ -128,7 +131,11 @@ fn serve_client_session(
 ) -> Result<(), Warning> {
     let client_session = ClientSession { session_id };
     loop {
-        let request = match read_control_frame(&mut stream, MAX_CONTROL_REQUEST_PAYLOAD) {
+        let request = match read_control_frame_with_file_descriptors(
+            &mut stream,
+            MAX_CONTROL_REQUEST_PAYLOAD,
+            MAX_CONTROL_REQUEST_FILE_DESCRIPTORS,
+        ) {
             Ok(request) => request,
             Err(warning) if warning.code() == WarningCode::Disconnected => {
                 cleanup_client_session(&registry, client_session.session_id)?;
@@ -136,9 +143,9 @@ fn serve_client_session(
             }
             Err(warning) => return Err(warning),
         };
-        let request_opcode = request.header.opcode;
+        let request_opcode = request.frame.header.opcode;
         let response = if request_opcode == Opcode::NotifyStreamAdded {
-            notify_stream_added_response(&registry, &request.payload)?
+            notify_stream_added_response(&registry, &request.frame.payload)?
         } else {
             let mut registry_guard = lock_registry(&registry, "serve_client_session::lock")?;
             handle_control_request(
@@ -148,7 +155,10 @@ fn serve_client_session(
                 request,
             )?
         };
-        if request_opcode == Opcode::RegisterPublisher {
+        if matches!(
+            request_opcode,
+            Opcode::RegisterPublisher | Opcode::ReregisterPublisher
+        ) {
             registry.stream_added.notify_all();
         }
         match write_daemon_response(&mut stream, response) {
@@ -206,22 +216,38 @@ fn handle_control_request(
     daemon_arguments: &DaemonArguments,
     registry: &mut DaemonRegistry,
     session_id: u64,
-    request: ControlFrame,
+    request: ControlFrameWithFileDescriptors,
 ) -> Result<DaemonResponse, Warning> {
-    let json = request.header.flags & CONTROL_FLAG_JSON != 0;
-    let frame = match request.header.opcode {
+    let json = request.frame.header.flags & CONTROL_FLAG_JSON != 0;
+    let frame = match request.frame.header.opcode {
         Opcode::Hello => ControlFrame {
             header: FrameHeader::new(Opcode::Hello, CONTROL_PROTOCOL_VERSION, 0),
             payload: Vec::new(),
         },
         Opcode::RegisterPublisher => {
-            return register_publisher_response(registry, session_id, &request.payload);
+            return register_publisher_response(registry, session_id, &request.frame.payload);
         }
         Opcode::RegisterSubscriber => {
-            return register_subscriber_response(registry, session_id, &request.payload);
+            return register_subscriber_response(registry, session_id, &request.frame.payload);
+        }
+        Opcode::ReregisterPublisher => {
+            return reregister_publisher_response(
+                registry,
+                session_id,
+                &request.frame.payload,
+                request.file_descriptors,
+            );
+        }
+        Opcode::ReregisterSubscriber => {
+            return reregister_subscriber_response(
+                registry,
+                session_id,
+                &request.frame.payload,
+                request.file_descriptors,
+            );
         }
         Opcode::AttachStreams => {
-            return attach_streams_response(registry, &request.payload);
+            return attach_streams_response(registry, &request.frame.payload);
         }
         Opcode::NotifyStreamAdded => {
             return Err(Warning::new(
@@ -231,11 +257,14 @@ fn handle_control_request(
             ));
         }
         Opcode::Unregister => {
-            return unregister_response(registry, &request.payload);
+            return unregister_response(registry, &request.frame.payload);
         }
-        Opcode::Inspect => {
-            inspect_response(registry, &daemon_arguments.domain, json, &request.payload)?
-        }
+        Opcode::Inspect => inspect_response(
+            registry,
+            &daemon_arguments.domain,
+            json,
+            &request.frame.payload,
+        )?,
         Opcode::GetStats => stats_response(registry, &daemon_arguments.domain, json)?,
         Opcode::GetWarnings => warnings_response(registry, &daemon_arguments.domain, json)?,
         Opcode::Cleanup => cleanup_response(registry, &daemon_arguments.domain, json)?,
@@ -538,7 +567,7 @@ fn subscriber_id_from_u64(value: u64, operation: &'static str) -> Result<Subscri
     Ok(SubscriberId::new(value as u8))
 }
 
-struct DaemonResponse {
-    frame: ControlFrame,
-    file_descriptors: Vec<std::os::fd::RawFd>,
+pub(crate) struct DaemonResponse {
+    pub(crate) frame: ControlFrame,
+    pub(crate) file_descriptors: Vec<std::os::fd::RawFd>,
 }

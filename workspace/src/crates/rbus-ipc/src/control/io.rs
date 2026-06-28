@@ -199,6 +199,13 @@ pub fn read_control_frame_with_file_descriptors(
     let mut frame_buffer = vec![0_u8; buffer_length];
     let received =
         receive_file_descriptors(stream.as_raw_fd(), &mut frame_buffer, max_file_descriptors)?;
+    if received.byte_count == 0 {
+        return Err(Warning::new(
+            WarningCode::Disconnected,
+            COMPONENT_IPC,
+            "read_control_frame_with_file_descriptors::eof",
+        ));
+    }
     if received.byte_count < FrameHeader::ENCODED_SIZE {
         return Err(Warning::new(
             WarningCode::ProtocolMismatch,

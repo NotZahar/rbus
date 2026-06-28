@@ -66,6 +66,22 @@ impl StreamInner {
         self.created_generation
     }
 
+    pub(crate) fn metadata(&self) -> StreamSegmentMetadata {
+        StreamSegmentMetadata {
+            stream_id: self.stream_id,
+            publisher_id: self.publisher_id,
+            topic_hash: self.topic_hash,
+            segment_size: self.layout.segment_size,
+            slot_size: self.layout.slot_size,
+            depth: self.layout.depth,
+        }
+    }
+
+    pub(crate) fn set_subscriber_count(&self, subscriber_count: u64) {
+        self.subscriber_count
+            .store(subscriber_count, Ordering::Relaxed);
+    }
+
     pub(crate) fn current_write_sequence(&self) -> Sequence {
         Sequence::new(
             self.segment_header()

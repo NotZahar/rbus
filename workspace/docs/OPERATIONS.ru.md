@@ -63,6 +63,13 @@ control request в `rbusd`. Если daemon недоступен, CLI завер
 `rbus-cli <command> --help`; общий список команд остаётся доступен через
 `rbus-cli --help`.
 
+`rbus-cli bench-smoke` является обёрткой над `rbus-bench --smoke`, а не
+заглушкой статуса. Команда запускает benchmark binary из того же каталога, что и
+`rbus-cli`, требует успешный exit status и smoke JSON с `status`,
+`warning_count`, matrix counters и `blocking_wait_wake_latency_ns`. Без `--json`
+печатается исходный smoke report benchmark-а; с `--json` report вкладывается в
+поле `bench_smoke` рядом с `domain`.
+
 `rbus-cli list --domain <domain>` показывает active topics, publishers,
 subscribers и streams из registry. Так как runtime protocol передаёт topic hash,
 а не исходную строку имени, topic отображается как `topic_hash`.
@@ -121,3 +128,13 @@ Crash cleanup выполняется по закрытию persistent control se
   FD;
 - restart `rbusd`: если daemon убит, он не маркирует существующие stream-ы, и
   уже attached data plane продолжает работать через сохранённые mmap mappings.
+
+После restart-а daemon-а control-plane registry восстанавливается клиентами.
+Publisher держит свои stream/topic-wait FD открытыми и внутренним worker-ом
+повторно регистрирует старый stream в новом `rbusd`. Subscriber хранит
+topic-wait FD и re-register-ится при следующем control refresh или blocking wait;
+новый daemon выдаёт ему новый `subscriber_id`, после чего subscriber заново
+attach-ит известные stream-ы без historical replay. Если daemon ещё недоступен,
+уже attached publisher/subscriber продолжают data-plane обмен через старые mmap
+segments; новые клиенты увидят старые stream-ы после успешного re-register
+publisher-а.

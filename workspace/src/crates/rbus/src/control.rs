@@ -14,6 +14,9 @@ use rbus_ipc::control::messages::{
     RegisterSubscriberResponse,
 };
 use rbus_ipc::control::opcode::Opcode;
+use rbus_ipc::control::reregister::{
+    ReregisterPublisherRequest, ReregisterPublisherResponse, ReregisterSubscriberRequest,
+};
 use rbus_ipc::fd::OwnedFileDescriptor;
 use rbus_ipc::stream_segment::StreamSegmentMetadata;
 use rbus_ipc::unix_socket::default_socket_path;
@@ -25,6 +28,8 @@ const MAX_ATTACH_STREAMS_RESPONSE: usize = 8192;
 const MAX_ATTACH_STREAMS_PER_RESPONSE: usize = 128;
 const REGISTER_PUBLISHER_FD_COUNT: usize = 2;
 const REGISTER_SUBSCRIBER_FD_COUNT: usize = 1;
+const REREGISTER_RESPONSE_FD_LIMIT: usize = 1;
+const REREGISTER_SUBSCRIBER_FD_COUNT: usize = 1;
 const STREAM_FD_INDEX: usize = 0;
 
 pub(crate) struct PublisherRegistration {
@@ -52,6 +57,11 @@ pub(crate) struct AttachedStream {
 pub(crate) struct StreamNotification {
     pub(crate) latest_generation: u64,
     pub(crate) streams: Vec<AttachedStream>,
+}
+
+pub(crate) struct ReregisteredPublisher {
+    pub(crate) subscriber_count: u64,
+    pub(crate) control_client: ControlClient,
 }
 
 pub(crate) fn connect_daemon(domain: &str) -> Result<PathBuf, Warning> {
@@ -168,6 +178,118 @@ pub(crate) fn register_subscriber(
         topic_wait_file_descriptor: response.file_descriptors.remove(STREAM_FD_INDEX),
         control_client,
     })
+}
+
+pub(crate) fn reregister_publisher(
+    socket_path: &Path,
+    metadata: StreamSegmentMetadata,
+    stream_file_descriptor: &OwnedFileDescriptor,
+    topic_wait_file_descriptor: &OwnedFileDescriptor,
+) -> Result<ReregisteredPublisher, Warning> {
+    let payload = ReregisterPublisherRequest {
+        topic_hash: metadata.topic_hash.as_u64(),
+        publisher_id: metadata.publisher_id.as_u64(),
+        stream_id: metadata.stream_id.as_u64(),
+        segment_size: metadata.segment_size as u64,
+        slot_size: metadata.slot_size as u64,
+        depth: metadata.depth as u64,
+    }
+    .encode();
+    let mut control_client = ControlClient::connect(socket_path)?;
+    let response = control_client.request_frame_with_sent_file_descriptors(
+        Opcode::ReregisterPublisher,
+        0,
+        &payload,
+        &[
+            stream_file_descriptor.as_raw_file_descriptor(),
+            topic_wait_file_descriptor.as_raw_file_descriptor(),
+        ],
+        ReregisterPublisherResponse::ENCODED_SIZE,
+        REREGISTER_RESPONSE_FD_LIMIT,
+    )?;
+    if response.frame.header.opcode != Opcode::ReregisterPublisher {
+        return Err(Warning::new(
+            WarningCode::ProtocolMismatch,
+            COMPONENT_RBUS,
+            "reregister_publisher::opcode",
+        ));
+    }
+    if !response.file_descriptors.is_empty() {
+        return Err(Warning::new(
+            WarningCode::ProtocolMismatch,
+            COMPONENT_RBUS,
+            "reregister_publisher::fd_count",
+        ));
+    }
+    let decoded = ReregisterPublisherResponse::decode(&response.frame.payload)?;
+    Ok(ReregisteredPublisher {
+        subscriber_count: decoded.subscriber_count,
+        control_client,
+    })
+}
+
+pub(crate) fn reregister_subscriber(
+    socket_path: &Path,
+    topic_hash: TopicHash,
+    topic_wait_file_descriptor: &OwnedFileDescriptor,
+) -> Result<SubscriberRegistration, Warning> {
+    let payload = ReregisterSubscriberRequest {
+        topic_hash: topic_hash.as_u64(),
+    }
+    .encode();
+    let mut control_client = ControlClient::connect(socket_path)?;
+    let mut response = control_client.request_frame_with_sent_file_descriptors(
+        Opcode::ReregisterSubscriber,
+        0,
+        &payload,
+        &[topic_wait_file_descriptor.as_raw_file_descriptor()],
+        RegisterSubscriberResponse::ENCODED_SIZE,
+        REREGISTER_SUBSCRIBER_FD_COUNT,
+    )?;
+    if response.frame.header.opcode != Opcode::ReregisterSubscriber {
+        return Err(Warning::new(
+            WarningCode::ProtocolMismatch,
+            COMPONENT_RBUS,
+            "reregister_subscriber::opcode",
+        ));
+    }
+    if response.file_descriptors.len() != REREGISTER_SUBSCRIBER_FD_COUNT {
+        return Err(Warning::new(
+            WarningCode::ProtocolMismatch,
+            COMPONENT_RBUS,
+            "reregister_subscriber::fd_count",
+        ));
+    }
+    let decoded = RegisterSubscriberResponse::decode(&response.frame.payload)?;
+    if decoded.subscriber_id >= u64::from(MAX_SUBSCRIBERS_PER_STREAM) {
+        return Err(Warning::new(
+            WarningCode::SubscriberLimitReached,
+            COMPONENT_RBUS,
+            "reregister_subscriber::subscriber_id",
+        ));
+    }
+    Ok(SubscriberRegistration {
+        subscriber_id: SubscriberId::new(decoded.subscriber_id as u8),
+        subscribed_generation: decoded.subscribed_generation,
+        topic_wait_file_descriptor: response.file_descriptors.remove(STREAM_FD_INDEX),
+        control_client,
+    })
+}
+
+pub(crate) fn check_control_session(control_client: &mut ControlClient) -> Result<(), Warning> {
+    let response = control_client.request_frame(Opcode::Hello, 0, &[], 0)?;
+    if response.header.opcode == Opcode::Hello
+        && response.header.flags == CONTROL_PROTOCOL_VERSION
+        && response.payload.is_empty()
+    {
+        Ok(())
+    } else {
+        Err(Warning::new(
+            WarningCode::ProtocolMismatch,
+            COMPONENT_RBUS,
+            "check_control_session::hello",
+        ))
+    }
 }
 
 pub(crate) fn attach_streams(

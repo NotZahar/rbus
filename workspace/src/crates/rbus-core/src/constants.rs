@@ -10,7 +10,7 @@ pub const SHARED_MEMORY_ABI_VERSION: u32 = 3;
 pub const SEGMENT_FLAG_CLOSED: u64 = 1;
 
 /// Control protocol metadata
-pub const CONTROL_PROTOCOL_VERSION: u16 = 1;
+pub const CONTROL_PROTOCOL_VERSION: u16 = 2;
 
 /// Internal documentation
 pub const CACHE_LINE_BYTES: usize = 64;

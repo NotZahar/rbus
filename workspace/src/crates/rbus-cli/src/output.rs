@@ -35,7 +35,7 @@ pub fn print_command_help(command: HelpCommand) {
         ),
         HelpCommand::BenchSmoke => print_command_usage(
             "rbus-cli bench-smoke [--domain <domain>] [--json]",
-            "Prints short smoke status for CLI",
+            "Runs rbus-bench --smoke and prints its machine-readable report",
         ),
     }
 }

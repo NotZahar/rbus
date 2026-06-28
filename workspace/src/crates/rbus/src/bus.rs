@@ -48,11 +48,14 @@ impl Bus {
             &registration.file_descriptor,
             registration.subscriber_count,
         )?;
-        Ok(Publisher::new(
+        Publisher::new(
+            self.socket_path.clone(),
             stream,
             topic_wait,
+            registration.file_descriptor,
+            registration.topic_wait_file_descriptor,
             registration.control_client,
-        ))
+        )
     }
 
     /// Subscriber runtime metadata
@@ -69,6 +72,7 @@ impl Bus {
             registration.subscriber_id,
             registration.subscribed_generation,
             topic_wait,
+            registration.topic_wait_file_descriptor,
             registration.control_client,
         );
         subscriber.attach_existing_streams()?;

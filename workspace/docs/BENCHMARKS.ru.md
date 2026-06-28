@@ -30,6 +30,16 @@ cargo run -p rbus-bench -- --smoke
 {"status":"ok","warning_count":0,"scenario_count":10,"transport_count":6,"payload_size_count":10,"process_id":1,"pinning_enabled":false,"publisher_count":1,"subscriber_count":1,"messages_per_second":0,"blocking_wait_wake_latency_ns":19795}
 ```
 
+Та же короткая проверка доступна через CLI:
+
+```text
+rbus-cli bench-smoke
+```
+
+CLI-команда запускает `rbus-bench --smoke` и печатает его JSON report. В режиме
+`--json` CLI добавляет `domain` и помещает benchmark report в объект
+`bench_smoke`; поле не является строковой заглушкой статуса.
+
 Smoke benchmark подтверждает, что blocking wait path проходит через kernel
 `futex(FUTEX_WAIT/FUTEX_WAKE)` на topic-level shared segment-е без polling
 `sleep`. Значение latency является smoke-метрикой конкретного контейнерного

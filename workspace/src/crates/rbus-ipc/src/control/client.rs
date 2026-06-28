@@ -1,5 +1,6 @@
 //! Control protocol metadata
 
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 
@@ -11,7 +12,7 @@ use super::FrameHeader;
 use super::handshake::hello_frame_header;
 use super::io::{
     ControlFrame, ControlFrameWithFileDescriptors, read_control_frame,
-    read_control_frame_with_file_descriptors, write_control_frame,
+    read_control_frame_with_file_descriptors, write_control_frame_with_file_descriptors,
 };
 use super::opcode::Opcode;
 
@@ -28,6 +29,11 @@ impl ControlClient {
         })
     }
 
+    /// Linux IPC metadata
+    pub fn as_raw_file_descriptor(&self) -> RawFd {
+        self.stream.as_raw_fd()
+    }
+
     /// Control protocol metadata
     pub fn request_frame(
         &mut self,
@@ -37,10 +43,11 @@ impl ControlClient {
         max_response_payload_length: usize,
     ) -> Result<ControlFrame, Warning> {
         let payload_length = control_payload_length(payload.len(), "ControlClient::request_frame")?;
-        write_control_frame(
+        write_control_frame_with_file_descriptors(
             &mut self.stream,
             FrameHeader::new(opcode, flags, payload_length),
             payload,
+            &[],
         )?;
         read_control_frame(&mut self.stream, max_response_payload_length)
     }
@@ -58,15 +65,43 @@ impl ControlClient {
             payload.len(),
             "ControlClient::request_frame_with_file_descriptors",
         )?;
-        write_control_frame(
+        write_control_frame_with_file_descriptors(
             &mut self.stream,
             FrameHeader::new(opcode, flags, payload_length),
             payload,
+            &[],
         )?;
         read_control_frame_with_file_descriptors(
             &mut self.stream,
             max_response_payload_length,
             max_file_descriptors,
+        )
+    }
+
+    /// Control protocol metadata
+    pub fn request_frame_with_sent_file_descriptors(
+        &mut self,
+        opcode: Opcode,
+        flags: u16,
+        payload: &[u8],
+        file_descriptors: &[RawFd],
+        max_response_payload_length: usize,
+        max_response_file_descriptors: usize,
+    ) -> Result<ControlFrameWithFileDescriptors, Warning> {
+        let payload_length = control_payload_length(
+            payload.len(),
+            "ControlClient::request_frame_with_sent_file_descriptors",
+        )?;
+        write_control_frame_with_file_descriptors(
+            &mut self.stream,
+            FrameHeader::new(opcode, flags, payload_length),
+            payload,
+            file_descriptors,
+        )?;
+        read_control_frame_with_file_descriptors(
+            &mut self.stream,
+            max_response_payload_length,
+            max_response_file_descriptors,
         )
     }
 }

@@ -84,6 +84,15 @@ topic registry, daemon-owned FD закрывается. Уже attached data pla
 stream-ы closed. Уже созданные publishers/subscribers продолжают обмен через
 существующие mmap mappings. Новый daemon при bind удаляет stale Unix socket
 pathname только если по нему нельзя подключиться к живому listener-у.
+После restart-а активные клиенты восстанавливают control-plane registry без
+расширения public API. Publisher сохраняет stream FD и topic-wait FD, а
+внутренний control worker после потери старой session отправляет их новому
+daemon-у командой `REREGISTER_PUBLISHER`; daemon не создаёт новый memfd, а
+регистрирует существующий stream metadata и отдаёт его новым subscribers через
+обычный `ATTACH_STREAMS`. Subscriber хранит topic-wait FD и на control/wait path
+выполняет `REREGISTER_SUBSCRIBER`, получает новый `subscriber_id` и повторяет
+attach. Старые mmap mappings и уже выданные `MessageRef` при этом остаются
+валидными; re-register не добавляет syscall в steady-state publish/try_recv.
 
 Warning на runtime-команде считается fatal для текущего `rbusd` process-а:
 daemon завершает request loop, печатает warning вместе с backtrace, а клиент

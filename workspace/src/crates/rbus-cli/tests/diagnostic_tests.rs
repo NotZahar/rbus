@@ -146,7 +146,47 @@ fn every_cli_command_json_output_is_valid() {
                 Some(MAX_SEGMENT_SIZE as u64)
             );
         }
+        if command_name == "bench-smoke" {
+            let bench_smoke = value
+                .get("bench_smoke")
+                .expect("bench-smoke JSON should contain report");
+            assert_eq!(
+                bench_smoke.get("status").and_then(Value::as_str),
+                Some("ok")
+            );
+            assert_eq!(
+                bench_smoke.get("warning_count").and_then(Value::as_u64),
+                Some(0)
+            );
+            assert!(
+                bench_smoke
+                    .get("blocking_wait_wake_latency_ns")
+                    .and_then(Value::as_u64)
+                    .is_some(),
+                "bench-smoke JSON should contain measured latency"
+            );
+        }
     }
+}
+
+#[test]
+fn bench_smoke_runs_real_benchmark_report() {
+    let output = run_cli(["bench-smoke"]);
+    let value = assert_valid_json(output);
+
+    assert_eq!(value.get("status").and_then(Value::as_str), Some("ok"));
+    assert_eq!(value.get("warning_count").and_then(Value::as_u64), Some(0));
+    assert!(
+        value
+            .get("blocking_wait_wake_latency_ns")
+            .and_then(Value::as_u64)
+            .is_some(),
+        "bench-smoke should print rbus-bench smoke report"
+    );
+    assert!(
+        value.get("bench_smoke").is_none(),
+        "bench-smoke without --json should not print the old CLI stub shape"
+    );
 }
 
 fn run_cli<I, S>(arguments: I) -> Output
@@ -277,7 +317,11 @@ fn expected_success_fragments(command_name: &str) -> &'static [&'static str] {
             "max_segment_size=",
             "warnings_total=1",
         ],
-        "bench-smoke" => &["bench smoke ok"],
+        "bench-smoke" => &[
+            "\"status\":\"ok\"",
+            "\"warning_count\":0",
+            "\"blocking_wait_wake_latency_ns\":",
+        ],
         _ => panic!("unknown CLI command {command_name}"),
     }
 }

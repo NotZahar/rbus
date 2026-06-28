@@ -6,6 +6,7 @@ mod control;
 mod loaned;
 mod message_ref;
 mod publisher;
+mod reregister;
 mod sequence;
 mod stats;
 mod stream;

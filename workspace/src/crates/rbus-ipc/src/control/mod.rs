@@ -7,6 +7,7 @@ pub mod handshake;
 pub mod io;
 pub mod messages;
 pub mod opcode;
+pub mod reregister;
 pub mod server;
 
 pub use codec::{decode_frame_header, encode_frame_header};

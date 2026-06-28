@@ -5,6 +5,10 @@ use std::thread;
 use std::time::Duration;
 
 use rbus::{Bus, Publisher, Subscriber, TopicConfig, WarningCode};
+use rbus_core::topic::stable_topic_hash;
+use rbus_ipc::control::client::request_control_frame_with_file_descriptors;
+use rbus_ipc::control::messages::{AttachStreamsRequest, AttachStreamsResponse};
+use rbus_ipc::control::opcode::Opcode;
 use rbus_ipc::unix_socket::default_socket_path;
 
 mod common;
@@ -26,6 +30,9 @@ const POLL_READY_DESCRIPTOR_COUNT: i32 = 1;
 const SUCCESS_RETURN_CODE: i32 = 0;
 const INITIAL_WAIT_STATUS: i32 = 0;
 const CLOSED_STREAM_COUNT: u64 = 1;
+const MAX_STREAM_RESPONSE_BYTES: usize = 1024;
+const MAX_TEST_FILE_DESCRIPTORS: usize = 8;
+const RESTORED_STREAM_COUNT: usize = 1;
 const PIPE_TIMEOUT_MS: i32 = 2_000;
 const WAIT_ATTEMPTS: usize = 200;
 const WAIT_STEP: Duration = Duration::from_millis(10);
@@ -125,6 +132,11 @@ fn rbusd_restart_keeps_existing_data_plane_working() {
     drop(first_message);
 
     daemon.restart();
+    wait_until_daemon_knows_stream(&daemon.domain, RESTART_TOPIC);
+    let late_bus = Bus::connect(&daemon.domain).expect("operation should succeed");
+    let late_subscriber = late_bus
+        .subscriber(RESTART_TOPIC)
+        .expect("subscriber operation should succeed");
     publisher
         .publish_bytes(RESTART_SECOND_PAYLOAD)
         .expect("operation should succeed");
@@ -133,6 +145,12 @@ fn rbusd_restart_keeps_existing_data_plane_working() {
         .expect("subscriber operation should succeed")
         .expect("message should be available");
     assert_eq!(second_message.as_slice(), RESTART_SECOND_PAYLOAD);
+    drop(second_message);
+    let late_message = late_subscriber
+        .recv_timeout(CHILD_RECEIVE_TIMEOUT)
+        .expect("subscriber operation should succeed")
+        .expect("message should be available");
+    assert_eq!(late_message.as_slice(), RESTART_SECOND_PAYLOAD);
 }
 
 fn child_subscriber_holds_message_ref(domain: &str, topic: &str, write_fd: RawFd) -> ! {
@@ -254,6 +272,34 @@ fn wait_until_stream_is_closed(subscriber: &Subscriber) {
         thread::sleep(WAIT_STEP);
     }
     panic!("subscriber operation should succeed");
+}
+
+fn wait_until_daemon_knows_stream(domain: &str, topic: &str) {
+    let payload = AttachStreamsRequest {
+        topic_hash: stable_topic_hash(topic).as_u64(),
+    }
+    .encode();
+    for _attempt in 0..WAIT_ATTEMPTS {
+        let response = request_control_frame_with_file_descriptors(
+            &default_socket_path(domain),
+            Opcode::AttachStreams,
+            0,
+            &payload,
+            MAX_STREAM_RESPONSE_BYTES,
+            MAX_TEST_FILE_DESCRIPTORS,
+        );
+        if let Ok(response) = response {
+            let decoded = AttachStreamsResponse::decode(&response.frame.payload)
+                .expect("operation should succeed");
+            if decoded.streams.len() == RESTORED_STREAM_COUNT
+                && response.file_descriptors.len() == RESTORED_STREAM_COUNT
+            {
+                return;
+            }
+        }
+        thread::sleep(WAIT_STEP);
+    }
+    panic!("rbusd should restore old publisher stream");
 }
 
 fn fork_process() -> libc::pid_t {

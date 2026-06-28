@@ -3,10 +3,14 @@ use std::sync::Arc;
 
 use rbus_core::ids::PublisherId;
 use rbus_core::warning::{Warning, WarningCode};
+use std::path::PathBuf;
+
 use rbus_ipc::control::client::ControlClient;
+use rbus_ipc::fd::OwnedFileDescriptor;
 use rbus_ipc::topic_wait::TopicWaitSegment;
 
 use crate::loaned::LoanedMessage;
+use crate::reregister::PublisherReregisterWorker;
 use crate::sequence::Sequence;
 use crate::stats::Stats;
 use crate::stream::StreamInner;
@@ -15,22 +19,32 @@ const COMPONENT_RBUS: &str = "rbus";
 
 /// Publisher runtime metadata
 pub struct Publisher {
+    _reregister_worker: PublisherReregisterWorker,
     stream: Arc<StreamInner>,
     topic_wait: Arc<TopicWaitSegment>,
-    _control_client: ControlClient,
 }
 
 impl Publisher {
     pub(crate) fn new(
+        socket_path: PathBuf,
         stream: Arc<StreamInner>,
         topic_wait: Arc<TopicWaitSegment>,
+        stream_file_descriptor: OwnedFileDescriptor,
+        topic_wait_file_descriptor: OwnedFileDescriptor,
         control_client: ControlClient,
-    ) -> Self {
-        Self {
+    ) -> Result<Self, Warning> {
+        let reregister_worker = PublisherReregisterWorker::start(
+            socket_path,
+            Arc::clone(&stream),
+            stream_file_descriptor,
+            topic_wait_file_descriptor,
+            control_client,
+        )?;
+        Ok(Self {
+            _reregister_worker: reregister_worker,
             stream,
             topic_wait,
-            _control_client: control_client,
-        }
+        })
     }
 
     pub(crate) fn publisher_id(&self) -> PublisherId {

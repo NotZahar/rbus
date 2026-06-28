@@ -29,6 +29,10 @@ pub enum Opcode {
     Doctor = 10,
     /// INSPECT
     Inspect = 11,
+    /// REREGISTER_PUBLISHER
+    ReregisterPublisher = 12,
+    /// REREGISTER_SUBSCRIBER
+    ReregisterSubscriber = 13,
 }
 
 impl TryFrom<u16> for Opcode {
@@ -47,6 +51,8 @@ impl TryFrom<u16> for Opcode {
             9 => Ok(Self::Cleanup),
             10 => Ok(Self::Doctor),
             11 => Ok(Self::Inspect),
+            12 => Ok(Self::ReregisterPublisher),
+            13 => Ok(Self::ReregisterSubscriber),
             _ => Err(Warning::new(
                 WarningCode::ProtocolMismatch,
                 COMPONENT_IPC,

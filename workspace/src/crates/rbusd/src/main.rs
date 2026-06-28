@@ -9,6 +9,7 @@ mod protocol_handler;
 mod publisher_entry;
 mod registry;
 mod registry_types;
+mod reregister;
 mod signal;
 mod smoke;
 mod stats;

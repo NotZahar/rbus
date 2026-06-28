@@ -56,6 +56,11 @@ orphaned resources, а `doctor` проверяет `/run/user/<uid>`, socket pat
 и owner socket directory, ABI/protocol, `memfd`, `mmap`, `eventfd`, `futex`,
 `SCM_RIGHTS`, `MAX_SEGMENT_SIZE` и resource limits.
 
+`rbus-cli bench-smoke` не обращается к daemon registry: команда запускает
+`rbus-bench --smoke`, проверяет machine-readable smoke report и печатает этот
+report. С `--json` CLI добавляет внешний объект с `domain` и вкладывает report в
+поле `bench_smoke`.
+
 `rbus-cli --help` печатает общий список команд, а
 `rbus-cli <command> --help` печатает справку по конкретной команде.
 
@@ -63,7 +68,12 @@ Crash cleanup выполняется daemon-ом по закрытию persisten
 dead subscriber bits очищаются из `readers_mask`, dead publisher stream
 помечается closed в shared memory, а stale socket pathname удаляется при restart
 `rbusd`. Уже attached data plane продолжает работать, если сам daemon был убит и
-запущен заново.
+запущен заново. Publisher хранит stream FD и topic-wait FD после `mmap`, поэтому
+его control worker re-register-ит старый stream в новом daemon-е через
+`REREGISTER_PUBLISHER` без участия payload path. Subscriber re-register-ится
+через `REREGISTER_SUBSCRIBER` на control/wait path и получает новый
+`subscriber_id`; уже выданные `MessageRef` продолжают освобождать старые reader
+bits при `Drop`.
 
 ## Минимальный API
 

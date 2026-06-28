@@ -10,10 +10,13 @@ use rbus_core::sequence::Sequence;
 use rbus_core::stats::Stats;
 use rbus_core::warning::{Warning, WarningCode};
 use rbus_ipc::control::client::ControlClient;
+use rbus_ipc::fd::OwnedFileDescriptor;
 use rbus_ipc::futex::{FutexWaitStatus, futex_wait_shared};
 use rbus_ipc::topic_wait::TopicWaitSegment;
 
-use crate::control::{AttachedStream, attach_streams, notify_stream_added, wait_stream_added};
+use crate::control::{
+    AttachedStream, attach_streams, notify_stream_added, reregister_subscriber, wait_stream_added,
+};
 use crate::message_ref::MessageRef;
 use crate::stream::{ReadAttempt, StreamInner};
 use crate::wait::ReceiveWaitStatus;
@@ -24,14 +27,15 @@ const COMPONENT_RBUS: &str = "rbus";
 pub struct Subscriber {
     socket_path: PathBuf,
     topic_hash: TopicHash,
-    subscriber_id: SubscriberId,
-    subscribed_generation: u64,
+    subscriber_id: Cell<SubscriberId>,
+    subscribed_generation: Cell<u64>,
     last_seen_generation: Cell<u64>,
     last_checked_stream_epoch: Cell<u32>,
     streams: RefCell<Vec<SubscriberStream>>,
     next_stream_index: Cell<usize>,
-    topic_wait: Arc<TopicWaitSegment>,
-    _control_client: ControlClient,
+    topic_wait: RefCell<Arc<TopicWaitSegment>>,
+    topic_wait_file_descriptor: RefCell<OwnedFileDescriptor>,
+    control_client: RefCell<ControlClient>,
 }
 
 impl Subscriber {
@@ -41,19 +45,22 @@ impl Subscriber {
         subscriber_id: SubscriberId,
         subscribed_generation: u64,
         topic_wait: Arc<TopicWaitSegment>,
+        topic_wait_file_descriptor: OwnedFileDescriptor,
         control_client: ControlClient,
     ) -> Self {
+        let stream_epoch = topic_wait.stream_epoch();
         Self {
             socket_path,
             topic_hash,
-            subscriber_id,
-            subscribed_generation,
+            subscriber_id: Cell::new(subscriber_id),
+            subscribed_generation: Cell::new(subscribed_generation),
             last_seen_generation: Cell::new(subscribed_generation),
-            last_checked_stream_epoch: Cell::new(topic_wait.stream_epoch()),
+            last_checked_stream_epoch: Cell::new(stream_epoch),
             streams: RefCell::new(Vec::new()),
             next_stream_index: Cell::new(0),
-            topic_wait,
-            _control_client: control_client,
+            topic_wait: RefCell::new(topic_wait),
+            topic_wait_file_descriptor: RefCell::new(topic_wait_file_descriptor),
+            control_client: RefCell::new(control_client),
         }
     }
 
@@ -69,9 +76,17 @@ impl Subscriber {
         let notification = notify_stream_added(
             &self.socket_path,
             self.topic_hash,
-            self.subscriber_id,
+            self.subscriber_id.get(),
             self.last_seen_generation.get(),
-        )?;
+        );
+        let notification = match notification {
+            Ok(notification) => notification,
+            Err(warning) if is_reconnect_warning(&warning) => {
+                self.reregister_control_plane()?;
+                return Ok(());
+            }
+            Err(warning) => return Err(warning),
+        };
         self.apply_stream_notification(notification)?;
         Ok(())
     }
@@ -111,7 +126,7 @@ impl Subscriber {
                     &attached_stream.file_descriptor,
                     0,
                 )?;
-                let cursor = if stream.created_generation() > self.subscribed_generation {
+                let cursor = if stream.created_generation() > self.subscribed_generation.get() {
                     Sequence::new(0)
                 } else {
                     stream.current_write_sequence()
@@ -128,10 +143,16 @@ impl Subscriber {
 
     /// Internal documentation
     pub fn try_recv(&self) -> Result<Option<MessageRef<'_>>, Warning> {
-        let observed_stream_epoch = self.topic_wait.stream_epoch();
+        let observed_stream_epoch = self.topic_wait_stream_epoch()?;
         if observed_stream_epoch != self.last_checked_stream_epoch.get() {
-            self.refresh_streams()?;
-            self.last_checked_stream_epoch.set(observed_stream_epoch);
+            match self.refresh_streams() {
+                Ok(()) => {}
+                Err(warning)
+                    if is_reconnect_warning(&warning) && self.attached_stream_count()? > 0 => {}
+                Err(warning) => return Err(warning),
+            }
+            self.last_checked_stream_epoch
+                .set(self.topic_wait_stream_epoch()?);
         }
         self.try_recv_from_attached_streams()
     }
@@ -154,7 +175,7 @@ impl Subscriber {
             let subscriber_stream = &mut streams[stream_index];
             match subscriber_stream
                 .stream
-                .try_read_message(subscriber_stream.cursor, self.subscriber_id)?
+                .try_read_message(subscriber_stream.cursor, self.subscriber_id.get())?
             {
                 ReadAttempt::Empty => {}
                 ReadAttempt::Message(read_reservation) => {
@@ -243,11 +264,17 @@ impl Subscriber {
         &self,
         timeout: Option<Duration>,
     ) -> Result<ReceiveWaitStatus, Warning> {
+        match self.refresh_streams() {
+            Ok(()) => {}
+            Err(warning) if is_reconnect_warning(&warning) && self.attached_stream_count()? > 0 => {
+            }
+            Err(warning) => return Err(warning),
+        }
         if self.attached_stream_count()? == 0 {
             let notification = wait_stream_added(
                 &self.socket_path,
                 self.topic_hash,
-                self.subscriber_id,
+                self.subscriber_id.get(),
                 self.last_seen_generation.get(),
                 timeout,
             )?;
@@ -273,13 +300,13 @@ impl Subscriber {
     }
 
     fn wait_for_topic_wake(&self, timeout: Option<Duration>) -> Result<ReceiveWaitStatus, Warning> {
-        let _waiter_guard = TopicWaiterGuard::new(&self.topic_wait, self.subscriber_id)?;
-        let expected_epoch = self.topic_wait.wake_epoch();
+        let topic_wait = self.topic_wait_arc()?;
+        let _waiter_guard = TopicWaiterGuard::new(&topic_wait, self.subscriber_id.get())?;
+        let expected_epoch = topic_wait.wake_epoch();
         if self.has_waitable_progress()? {
             return Ok(ReceiveWaitStatus::Woken);
         }
-        let wait_status =
-            futex_wait_shared(self.topic_wait.wake_epoch_word(), expected_epoch, timeout)?;
+        let wait_status = futex_wait_shared(topic_wait.wake_epoch_word(), expected_epoch, timeout)?;
         Ok(match wait_status {
             FutexWaitStatus::TimedOut => ReceiveWaitStatus::TimedOut,
             FutexWaitStatus::Woken | FutexWaitStatus::ValueChanged => ReceiveWaitStatus::Woken,
@@ -287,7 +314,7 @@ impl Subscriber {
     }
 
     fn has_waitable_progress(&self) -> Result<bool, Warning> {
-        if self.topic_wait.stream_epoch() != self.last_checked_stream_epoch.get() {
+        if self.topic_wait_stream_epoch()? != self.last_checked_stream_epoch.get() {
             return Ok(true);
         }
         let streams = self.streams.try_borrow().map_err(|_| {
@@ -300,6 +327,84 @@ impl Subscriber {
         Ok(streams.iter().any(|subscriber_stream| {
             subscriber_stream.stream.current_write_sequence() > subscriber_stream.cursor
         }))
+    }
+
+    fn reregister_control_plane(&self) -> Result<(), Warning> {
+        let registration = {
+            let topic_wait_file_descriptor =
+                self.topic_wait_file_descriptor.try_borrow().map_err(|_| {
+                    Warning::new(
+                        WarningCode::InternalInvariantWarning,
+                        COMPONENT_RBUS,
+                        "Subscriber::reregister_control_plane::fd_borrow",
+                    )
+                })?;
+            reregister_subscriber(
+                &self.socket_path,
+                self.topic_hash,
+                &topic_wait_file_descriptor,
+            )?
+        };
+        let topic_wait = Arc::new(TopicWaitSegment::map(
+            &registration.topic_wait_file_descriptor,
+        )?);
+        self.subscriber_id.set(registration.subscriber_id);
+        self.subscribed_generation
+            .set(registration.subscribed_generation);
+        self.last_seen_generation
+            .set(registration.subscribed_generation);
+        self.last_checked_stream_epoch
+            .set(topic_wait.stream_epoch());
+        *self.topic_wait.try_borrow_mut().map_err(|_| {
+            Warning::new(
+                WarningCode::InternalInvariantWarning,
+                COMPONENT_RBUS,
+                "Subscriber::reregister_control_plane::topic_wait_borrow",
+            )
+        })? = topic_wait;
+        *self
+            .topic_wait_file_descriptor
+            .try_borrow_mut()
+            .map_err(|_| {
+                Warning::new(
+                    WarningCode::InternalInvariantWarning,
+                    COMPONENT_RBUS,
+                    "Subscriber::reregister_control_plane::fd_borrow_mut",
+                )
+            })? = registration.topic_wait_file_descriptor;
+        *self.control_client.try_borrow_mut().map_err(|_| {
+            Warning::new(
+                WarningCode::InternalInvariantWarning,
+                COMPONENT_RBUS,
+                "Subscriber::reregister_control_plane::client_borrow",
+            )
+        })? = registration.control_client;
+        self.attach_existing_streams()
+    }
+
+    fn topic_wait_stream_epoch(&self) -> Result<u32, Warning> {
+        Ok(self
+            .topic_wait
+            .try_borrow()
+            .map_err(|_| {
+                Warning::new(
+                    WarningCode::InternalInvariantWarning,
+                    COMPONENT_RBUS,
+                    "Subscriber::topic_wait_stream_epoch",
+                )
+            })?
+            .stream_epoch())
+    }
+
+    fn topic_wait_arc(&self) -> Result<Arc<TopicWaitSegment>, Warning> {
+        let topic_wait = self.topic_wait.try_borrow().map_err(|_| {
+            Warning::new(
+                WarningCode::InternalInvariantWarning,
+                COMPONENT_RBUS,
+                "Subscriber::topic_wait_arc",
+            )
+        })?;
+        Ok(Arc::clone(&topic_wait))
     }
 }
 
@@ -329,4 +434,11 @@ impl Drop for TopicWaiterGuard<'_> {
     fn drop(&mut self) {
         self.topic_wait.remove_waiter(self.waiter_mask);
     }
+}
+
+fn is_reconnect_warning(warning: &Warning) -> bool {
+    matches!(
+        warning.code(),
+        WarningCode::DaemonUnavailable | WarningCode::Disconnected
+    )
 }
