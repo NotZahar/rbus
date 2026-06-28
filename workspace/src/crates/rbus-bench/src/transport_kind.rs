@@ -28,6 +28,14 @@ pub const SUITE_TRANSPORTS: &[TransportKind] = &[
     TransportKind::UnixSocketEndToEnd,
 ];
 
+/// Benchmark metadata
+pub const PACED_TRANSPORTS: &[TransportKind] = &[
+    TransportKind::RbusLoanedMetadataOnly,
+    TransportKind::RbusLoanedFill,
+    TransportKind::RbusPublishBytes,
+    TransportKind::UnixSocket,
+];
+
 impl TransportKind {
     /// Benchmark metadata
     pub fn parse(value: &str) -> Option<Self> {

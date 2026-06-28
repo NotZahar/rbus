@@ -20,10 +20,42 @@ pub struct Topology {
     pub kind: ScenarioKind,
 }
 
-/// Benchmark metadata
-pub const TOPOLOGIES: &[Topology] = &[Topology {
+const FOUR_PUBLISHERS_EIGHT_SUBSCRIBERS: Topology = Topology {
     name: "four-publishers-eight-subscribers",
     publisher_count: 4,
     subscriber_count: 8,
     kind: ScenarioKind::OneWay,
-}];
+};
+
+const ONE_PUBLISHER_ONE_SUBSCRIBER: Topology = Topology {
+    name: "one-publisher-one-subscriber",
+    publisher_count: 1,
+    subscriber_count: 1,
+    kind: ScenarioKind::OneWay,
+};
+
+const ONE_PUBLISHER_FOUR_SUBSCRIBERS: Topology = Topology {
+    name: "one-publisher-four-subscribers",
+    publisher_count: 1,
+    subscriber_count: 4,
+    kind: ScenarioKind::OneWay,
+};
+
+/// Benchmark metadata
+pub const TOPOLOGIES: &[Topology] = &[FOUR_PUBLISHERS_EIGHT_SUBSCRIBERS];
+
+/// Benchmark metadata
+pub const PACED_TOPOLOGIES: &[Topology] = &[
+    ONE_PUBLISHER_ONE_SUBSCRIBER,
+    ONE_PUBLISHER_FOUR_SUBSCRIBERS,
+    FOUR_PUBLISHERS_EIGHT_SUBSCRIBERS,
+];
+
+pub fn topology_by_name(name: &str) -> Option<Topology> {
+    for topology in PACED_TOPOLOGIES {
+        if topology.name == name {
+            return Some(*topology);
+        }
+    }
+    None
+}

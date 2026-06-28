@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use rbus_core::warning::{Warning, WarningCode};
 
+use crate::load_mode::{LoadMode, parse_positive_rate_hz};
 use crate::transport_kind::TransportKind;
 use crate::wait_mode::WaitMode;
 
@@ -17,7 +18,7 @@ pub enum WorkerRole {
     CrashPublisher,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WorkerArguments {
     pub role: WorkerRole,
     pub domain: String,
@@ -29,6 +30,9 @@ pub struct WorkerArguments {
     pub publisher_count: u8,
     pub subscriber_count: u8,
     pub messages_per_publisher: u32,
+    pub load_mode: LoadMode,
+    pub rate_hz: Option<f64>,
+    pub pace_spin_tail_us: u64,
     pub wait_mode: WaitMode,
     pub transport: TransportKind,
     pub attach_ready_file: Option<PathBuf>,
@@ -50,6 +54,7 @@ pub struct WorkerReport {
     pub warnings: u64,
     pub skipped_messages: u64,
     pub backpressure_pinned_slot: u64,
+    pub publish_deadline_miss_count: u64,
 }
 
 impl WorkerRole {
@@ -95,6 +100,17 @@ impl WorkerArguments {
                 "--publisher-count" => parsed.publisher_count = Some(parse_next(&mut iterator)?),
                 "--subscriber-count" => parsed.subscriber_count = Some(parse_next(&mut iterator)?),
                 "--messages" => parsed.messages_per_publisher = Some(parse_next(&mut iterator)?),
+                "--load-mode" => {
+                    let value = next_argument(&mut iterator)?;
+                    parsed.load_mode = Some(LoadMode::parse(&value).ok_or_else(invalid_argument)?);
+                }
+                "--rate-hz" => {
+                    let value = next_argument(&mut iterator)?;
+                    parsed.rate_hz = Some(parse_positive_rate_hz(&value)?);
+                }
+                "--pace-spin-tail-us" => {
+                    parsed.pace_spin_tail_us = Some(parse_next(&mut iterator)?);
+                }
                 "--wait-mode" => {
                     let value = next_argument(&mut iterator)?;
                     parsed.wait_mode = Some(WaitMode::parse(&value).ok_or_else(invalid_argument)?);
@@ -160,6 +176,9 @@ struct WorkerArgumentBuilder {
     publisher_count: Option<u8>,
     subscriber_count: Option<u8>,
     messages_per_publisher: Option<u32>,
+    load_mode: Option<LoadMode>,
+    rate_hz: Option<f64>,
+    pace_spin_tail_us: Option<u64>,
     wait_mode: Option<WaitMode>,
     transport: Option<TransportKind>,
     attach_ready_file: Option<PathBuf>,
@@ -182,6 +201,9 @@ impl WorkerArgumentBuilder {
             publisher_count: None,
             subscriber_count: None,
             messages_per_publisher: None,
+            load_mode: Some(LoadMode::Saturated),
+            rate_hz: None,
+            pace_spin_tail_us: Some(0),
             wait_mode: None,
             transport: None,
             attach_ready_file: None,
@@ -204,6 +226,9 @@ impl WorkerArgumentBuilder {
             publisher_count: self.publisher_count.ok_or_else(invalid_argument)?,
             subscriber_count: self.subscriber_count.ok_or_else(invalid_argument)?,
             messages_per_publisher: self.messages_per_publisher.ok_or_else(invalid_argument)?,
+            load_mode: self.load_mode.ok_or_else(invalid_argument)?,
+            rate_hz: self.rate_hz,
+            pace_spin_tail_us: self.pace_spin_tail_us.ok_or_else(invalid_argument)?,
             wait_mode: self.wait_mode.ok_or_else(invalid_argument)?,
             transport: self.transport.ok_or_else(invalid_argument)?,
             attach_ready_file: self.attach_ready_file,

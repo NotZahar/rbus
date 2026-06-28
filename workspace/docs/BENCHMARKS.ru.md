@@ -24,7 +24,26 @@ transport-режимов и payload sizes, PID harness-а, флаг CPU pinning,
 `publisher_count`/`subscriber_count`, `messages_per_second` и
 `blocking_wait_wake_latency_ns`.
 
-Актуальная suite matrix намеренно ограничена; сам suite имеет hard timeout 20
+У benchmark suite есть два режима нагрузки:
+
+- `--load-mode saturated` — режим по умолчанию и прежнее поведение. Publisher-ы
+  отправляют сообщения настолько быстро, насколько позволяет transport. Основная
+  метрика — максимальный throughput, а latency в этом режиме включает queueing
+  latency насыщенного ring/buffer-а.
+- `--load-mode paced` — режим controlled-load latency. В первом срезе
+  поддерживается только `--rate-hz 30` и `--rate-scope per-publisher`, то есть
+  каждый publisher публикует 30 сообщений в секунду. Количество сообщений
+  вычисляется как `floor(duration_seconds * rate_hz)` из `--duration-ms`;
+  одновременная передача `--messages` и `--duration-ms` в paced mode считается
+  ошибкой конфигурации.
+
+Paced smoke:
+
+```text
+target/release/rbus-bench --smoke --load-mode paced --rate-hz 30 --duration-ms 1000
+```
+
+Актуальная saturated suite matrix намеренно ограничена; сам suite имеет hard timeout 20
 минут и завершает прогон ошибкой `Timeout`, если бюджет исчерпан перед очередным
 измерением:
 
@@ -35,6 +54,20 @@ transport-режимов и payload sizes, PID harness-а, флаг CPU pinning,
   8 MiB;
 - transports: `rbus-loaned-metadata-only`, `rbus-loaned-fill`,
   `rbus-publish-bytes`, `unix-socket`, `unix-socket-end-to-end`.
+
+Первый paced-срез использует отдельную минимальную матрицу:
+
+- topology: `one-publisher-one-subscriber`, `one-publisher-four-subscribers`,
+  `four-publishers-eight-subscribers`;
+- wait mode: `busy-poll`;
+- payload: 64 B, 4 KiB, 64 KiB, 1 MiB, 8 MiB;
+- rate: 30 Hz на publisher;
+- transports: `rbus-loaned-metadata-only`, `rbus-loaned-fill`,
+  `rbus-publish-bytes`, `unix-socket`.
+
+Перед запуском paced строки harness считает configured write/delivery GiB/s и
+падает до старта worker-ов, если workload превышает safety cap. Rate или
+duration не clamp-ятся.
 
 Режимы разделены по смыслу:
 
@@ -57,13 +90,52 @@ transport-режимов и payload sizes, PID harness-а, флаг CPU pinning,
 
 Readiness сделан двумя barrier-ами: subscriber пишет attach-ready file после
 setup/attach, все worker-ы выполняют warmup и пишут measurement-ready file, затем
-parent создаёт общий start flag. Worker-ы входят в measured window только после
-start flag; fixed sleep для attach readiness не используется.
+parent создаёт общий start flag с monotonic timestamp немного в будущем.
+Worker-ы входят в measured window по этому абсолютному времени; fixed sleep для
+attach readiness не используется.
+
+В paced mode publisher использует абсолютное расписание, а не `sleep(period)`
+после publish:
+
+```text
+deadline = benchmark_start + message_index * period
+wait_until(deadline)
+publish_one_message()
+```
+
+`--pace-spin-tail-us` по умолчанию равен 0. Если он больше 0, worker sleep-ит до
+`deadline - spin_tail`, затем busy-spin до deadline. Это поведение benchmark
+driver-а и не входит в `publish_syscalls/message` или `try_recv_syscalls/message`.
 
 Suite report содержит две one-way latency-семантики:
 
 - `transport_latency_*_ns`: timestamp ставится после подготовки payload;
 - `end_to_end_latency_*_ns`: timestamp ставится перед генерацией payload.
+
+Для paced latency основной сигнал — `transport_latency_*_ns`: payload fill или
+подготовка baseline buffer-а уже завершены, timestamp ставится прямо перед
+commit/write. `end_to_end_latency_*_ns` показывает путь от начала генерации
+payload до receive и нужен отдельно, чтобы не смешивать эти две семантики.
+
+Paced report дополнительно содержит:
+
+- `publish_lateness_*_ns` и `publish_deadline_miss_count` — качество соблюдения
+  абсолютного расписания;
+- `inter_publish_gap_*_ns` и `inter_receive_gap_*_ns` — jitter публикации и
+  доставки;
+- `backlog_metric_available` и `ring_backlog_*_messages` — occupancy/backlog.
+  Для rbus backlog считается как агрегированное отставание subscriber-а от
+  опубликованных сообщений; для baseline transport-ов поле доступности равно
+  `false`;
+- `unique_publish_messages_per_second` — фактическая уникальная публикация;
+- `delivered_messages_per_second` — фактическая fan-out доставка;
+- `actual_payload_write_gib_per_second` — объём уникально записанного payload;
+- `effective_payload_delivery_gib_per_second` — fan-out payload delivery. Это не
+  физическая memory bandwidth.
+
+Для `rbus-loaned-metadata-only` GiB/s является logical/effective метрикой:
+payload slot предварительно подготовлен, а в measured window обновляются только
+timestamp/metadata и commit.
 
 Throughput считается по worker measured window: для one-way берётся максимум
 `duration_ns` всех publisher/subscriber worker-ов после start barrier. Parent
@@ -89,7 +161,8 @@ benches/baselines/rbus_suite_baseline_x86_64.csv
 ```
 
 Baseline использует exact keys: `scenario`, `transport`, `wait_mode`,
-`payload_size`, `publisher_count`, `subscriber_count`, `measured_messages`.
+`load_mode`, `payload_size`, `publisher_count`, `subscriber_count`,
+`measured_messages`.
 Wildcard-ключи и `payload_size=0` запрещены. Gate проверяет transport latency,
 end-to-end latency, round-trip latency, throughput, payload throughput,
 allocations/message, syscalls/message, warning count, skipped messages и
@@ -103,8 +176,9 @@ npm run bench:perf
 npm run bench:strace
 ```
 
-`bench:reference` запускает suite с `--no-gate` и записывает CSV baseline.
-Latency thresholds считаются как `max(2x, +50us)`, throughput thresholds как 80%
-от измерения, `syscalls/message` ceiling как `1.25x + 16`. `bench:perf`
-запускает suite с regression gate против baseline. Для короткой проверки можно
-добавить `--matrix-smoke`.
+`bench:reference` запускает suite с `--no-gate` и записывает raw measured CSV
+baseline без ослабляющих threshold-ов. `bench:perf` запускает suite с regression
+gate против baseline: latency допускает максимум 5% регрессии, а allocations,
+syscalls, warning count, skipped messages и pinned-slot backpressure проверяются
+как ceiling/hard-zero по baseline. Для короткой проверки можно добавить
+`--matrix-smoke`.

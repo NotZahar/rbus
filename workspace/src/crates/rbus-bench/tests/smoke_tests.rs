@@ -1,21 +1,21 @@
 use std::collections::BTreeSet;
 use std::process::Command;
 
-const BASELINE_FIELD_COUNT: usize = 36;
-const BASELINE_TRANSPORT_LATENCY_P50_FIELD: usize = 8;
-const BASELINE_TRANSPORT_LATENCY_P99_FIELD: usize = 10;
+const BASELINE_FIELD_COUNT: usize = 60;
+const BASELINE_TRANSPORT_LATENCY_P50_FIELD: usize = 28;
+const BASELINE_TRANSPORT_LATENCY_P99_FIELD: usize = 30;
 const BASELINE_PAYLOAD_SIZE_FIELD: usize = 4;
 const BASELINE_PUBLISHER_COUNT_FIELD: usize = 5;
 const BASELINE_SCENARIO_FIELD: usize = 1;
 const BASELINE_SUBSCRIBER_COUNT_FIELD: usize = 6;
-const BASELINE_THROUGHPUT_FIELD: usize = 22;
+const BASELINE_THROUGHPUT_FIELD: usize = 42;
 const BASELINE_TRANSPORT_FIELD: usize = 2;
 const BASELINE_WAIT_MODE_FIELD: usize = 3;
-const BASELINE_WARNING_COUNT_FIELD: usize = 30;
-const BASELINE_SYSCALLS_FIELD: usize = 28;
-const BASELINE_MEASURED_MESSAGES_FIELD: usize = 7;
-const CSV_MINIMUM_FIELD_COUNT: usize = 29;
-const CSV_SYSCALLS_FIELD: usize = 28;
+const BASELINE_WARNING_COUNT_FIELD: usize = 54;
+const BASELINE_SYSCALLS_FIELD: usize = 52;
+const BASELINE_MEASURED_MESSAGES_FIELD: usize = 13;
+const CSV_MINIMUM_FIELD_COUNT: usize = 53;
+const CSV_SYSCALLS_FIELD: usize = 52;
 const CSV_TRANSPORT_FIELD: usize = 2;
 const CONTAINER_SOURCE_ROOT_LITERAL: &str = concat!("/workspace", "/src");
 const BASELINE_MESSAGES_PER_PUBLISHER: u64 = 100_000;
@@ -69,6 +69,72 @@ fn bench_smoke_outputs_json_status() {
 }
 
 #[test]
+fn paced_smoke_runs_one_publisher_one_subscriber_at_30_hz() -> Result<(), Box<dyn std::error::Error>>
+{
+    let stdout = run_paced_smoke("rbus-loaned-metadata-only")?;
+    assert!(stdout.contains("\"status\":\"ok\""));
+    assert!(stdout.contains("\"scenario\":\"one-publisher-one-subscriber\""));
+    assert!(stdout.contains("\"load_mode\":\"paced\""));
+    assert!(stdout.contains("\"rate_hz\":30.000000000"));
+    Ok(())
+}
+
+#[test]
+fn paced_smoke_reports_zero_warnings_for_normal_case() -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = run_paced_smoke("rbus-loaned-metadata-only")?;
+    assert!(stdout.contains("\"warning_count\":0"));
+    assert!(stdout.contains("\"skipped_messages\":0"));
+    assert!(stdout.contains("\"backpressure_pinned_slot\":0"));
+    Ok(())
+}
+
+#[test]
+fn paced_smoke_reports_zero_allocations_for_rbus_loaned_path()
+-> Result<(), Box<dyn std::error::Error>> {
+    let stdout = run_paced_smoke("rbus-loaned-fill")?;
+    assert!(stdout.contains("\"allocations_per_message\":0.000000"));
+    Ok(())
+}
+
+#[test]
+fn paced_smoke_reports_zero_syscalls_for_rbus_busy_poll_hot_path()
+-> Result<(), Box<dyn std::error::Error>> {
+    let stdout = run_paced_smoke("rbus-loaned-metadata-only")?;
+    assert!(stdout.contains("\"syscalls_per_message\":0.000000"));
+    Ok(())
+}
+
+#[test]
+fn paced_smoke_records_backlog_metrics() -> Result<(), Box<dyn std::error::Error>> {
+    let stdout = run_paced_smoke("rbus-loaned-metadata-only")?;
+    assert!(stdout.contains("\"backlog_metric_available\":true"));
+    assert!(stdout.contains("\"ring_backlog_p99_messages\""));
+    assert!(stdout.contains("\"ring_backlog_max_messages\""));
+    Ok(())
+}
+
+#[test]
+fn paced_smoke_fails_fast_on_invalid_rate() -> Result<(), Box<dyn std::error::Error>> {
+    let binary_path = env!("CARGO_BIN_EXE_rbus-bench");
+    let output = Command::new(binary_path)
+        .args([
+            "--smoke",
+            "--load-mode",
+            "paced",
+            "--rate-hz",
+            "60",
+            "--duration-ms",
+            "1000",
+        ])
+        .output()?;
+    assert!(!output.status.success(), "operation should fail");
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("InvalidConfig"));
+    assert!(stderr.contains("stacktrace"));
+    Ok(())
+}
+
+#[test]
 fn bench_rejects_unknown_hot_path_probe_operation() {
     let binary_path = env!("CARGO_BIN_EXE_rbus-bench");
     let output = Command::new(binary_path)
@@ -79,6 +145,25 @@ fn bench_rejects_unknown_hot_path_probe_operation() {
     let stderr = String::from_utf8(output.stderr).expect("value should be utf8");
     assert!(stderr.contains("InvalidConfig"));
     assert!(stderr.contains("stacktrace"));
+}
+
+fn run_paced_smoke(transport: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let binary_path = env!("CARGO_BIN_EXE_rbus-bench");
+    let output = Command::new(binary_path)
+        .args([
+            "--smoke",
+            "--load-mode",
+            "paced",
+            "--rate-hz",
+            "30",
+            "--duration-ms",
+            "1000",
+            "--transport",
+            transport,
+        ])
+        .output()?;
+    assert!(output.status.success(), "operation should succeed");
+    Ok(String::from_utf8(output.stdout)?)
 }
 
 #[test]
@@ -144,7 +229,7 @@ fn bench_suite_csv_streams_rows_before_gate_failure() {
 }
 
 #[test]
-fn bench_suite_baseline_uses_production_thresholds() {
+fn bench_suite_baseline_uses_raw_production_measurements() {
     let baseline_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../benches/baselines")
         .join(BASELINE_FILE);

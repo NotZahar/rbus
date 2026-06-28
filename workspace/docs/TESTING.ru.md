@@ -186,7 +186,6 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | UNREGISTER happy/warning | `crates/rbusd/src/daemon.rs`, `crates/rbusd/src/registry.rs` | `unregister_happy_path_removes_publisher_stream`, `unregister_warning_path_rejects_unknown_publisher` |
 | rbusd lifecycle cleanup | `crates/rbusd/src/daemon.rs`, `crates/rbusd/src/registry.rs` | `subscriber_id_is_reused_after_session_close`, `publisher_stream_is_removed_after_session_close` |
 | rbusd explicit cleanup orphan records | `crates/rbusd/src/cleanup.rs` | `cleanup_removes_orphaned_subscriber_mask_bit` |
-| systemd user unit install check | `systemd/rbusd@.service`, `systemd/rbusd.socket` | `crates/rbusd/tests/systemd_unit_install_tests.rs` |
 | CLI без daemon-а не использует fallback | `crates/rbus-cli/src/control_client.rs` | `crates/rbus-cli/tests/list_tests.rs` |
 | CLI command help для каждой команды | `crates/rbus-cli/src/{args.rs,output.rs}` | `every_cli_command_prints_command_help` |
 | CLI success path с running daemon | `crates/rbus-cli/src/commands/*.rs`, `crates/rbusd/src/{inspect,stats,warnings,cleanup,doctor}.rs` | `every_cli_command_succeeds_with_running_daemon` |

@@ -9,7 +9,33 @@ pub(crate) fn aggregate_repeated_results(results: &mut [BenchmarkResult]) -> Ben
         payload_size: first.payload_size,
         publisher_count: first.publisher_count,
         subscriber_count: first.subscriber_count,
+        load_mode: first.load_mode,
+        rate_hz: first.rate_hz,
+        rate_scope: first.rate_scope,
+        duration_ms: first.duration_ms,
+        configured_messages_per_publisher: first.configured_messages_per_publisher,
+        actual_messages_per_publisher: results
+            .iter()
+            .map(|result| result.actual_messages_per_publisher)
+            .sum(),
         measured_messages: results.iter().map(|result| result.measured_messages).sum(),
+        publish_deadline_miss_count: results
+            .iter()
+            .map(|result| result.publish_deadline_miss_count)
+            .sum(),
+        publish_lateness_p50_ns: median_u64(results, |result| result.publish_lateness_p50_ns),
+        publish_lateness_p90_ns: median_u64(results, |result| result.publish_lateness_p90_ns),
+        publish_lateness_p99_ns: median_u64(results, |result| result.publish_lateness_p99_ns),
+        publish_lateness_max_ns: median_u64(results, |result| result.publish_lateness_max_ns),
+        inter_publish_gap_p50_ns: median_u64(results, |result| result.inter_publish_gap_p50_ns),
+        inter_publish_gap_p99_ns: median_u64(results, |result| result.inter_publish_gap_p99_ns),
+        inter_receive_gap_p50_ns: median_u64(results, |result| result.inter_receive_gap_p50_ns),
+        inter_receive_gap_p99_ns: median_u64(results, |result| result.inter_receive_gap_p99_ns),
+        backlog_metric_available: first.backlog_metric_available,
+        ring_backlog_p50_messages: median_u64(results, |result| result.ring_backlog_p50_messages),
+        ring_backlog_p90_messages: median_u64(results, |result| result.ring_backlog_p90_messages),
+        ring_backlog_p99_messages: median_u64(results, |result| result.ring_backlog_p99_messages),
+        ring_backlog_max_messages: median_u64(results, |result| result.ring_backlog_max_messages),
         transport_latency_p50_ns: median_u64(results, |result| result.transport_latency_p50_ns),
         transport_latency_p90_ns: median_u64(results, |result| result.transport_latency_p90_ns),
         transport_latency_p99_ns: median_u64(results, |result| result.transport_latency_p99_ns),
@@ -31,6 +57,18 @@ pub(crate) fn aggregate_repeated_results(results: &mut [BenchmarkResult]) -> Ben
         }),
         payload_throughput_gib_per_second: median_f64(results, |result| {
             result.payload_throughput_gib_per_second
+        }),
+        unique_publish_messages_per_second: median_f64(results, |result| {
+            result.unique_publish_messages_per_second
+        }),
+        delivered_messages_per_second: median_f64(results, |result| {
+            result.delivered_messages_per_second
+        }),
+        actual_payload_write_gib_per_second: median_f64(results, |result| {
+            result.actual_payload_write_gib_per_second
+        }),
+        effective_payload_delivery_gib_per_second: median_f64(results, |result| {
+            result.effective_payload_delivery_gib_per_second
         }),
         cpu_utilization_per_mille: median_u64(results, |result| result.cpu_utilization_per_mille),
         rss_bytes: median_u64(results, |result| result.rss_bytes),
@@ -134,6 +172,30 @@ mod tests {
             warning_count,
             skipped_messages,
             backpressure_pinned_slot: 0,
+            load_mode: crate::load_mode::LoadMode::Saturated,
+            rate_hz: 0.0,
+            rate_scope: crate::load_mode::RateScope::PerPublisher,
+            duration_ms: 0,
+            configured_messages_per_publisher: 4,
+            actual_messages_per_publisher: 4,
+            publish_deadline_miss_count: 0,
+            publish_lateness_p50_ns: 0,
+            publish_lateness_p90_ns: 0,
+            publish_lateness_p99_ns: 0,
+            publish_lateness_max_ns: 0,
+            inter_publish_gap_p50_ns: 0,
+            inter_publish_gap_p99_ns: 0,
+            inter_receive_gap_p50_ns: 0,
+            inter_receive_gap_p99_ns: 0,
+            backlog_metric_available: true,
+            ring_backlog_p50_messages: 0,
+            ring_backlog_p90_messages: 0,
+            ring_backlog_p99_messages: 0,
+            ring_backlog_max_messages: 0,
+            unique_publish_messages_per_second: throughput_messages_per_second,
+            delivered_messages_per_second: throughput_messages_per_second,
+            actual_payload_write_gib_per_second: 0.0,
+            effective_payload_delivery_gib_per_second: 0.0,
             startup_latency_ns: 0,
             attach_latency_ns: 0,
             orchestration_wall_time_ns: 0,

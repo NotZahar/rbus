@@ -8,40 +8,41 @@ use crate::payload::PAYLOAD_SIZES;
 use crate::report::CSV_HEADER;
 
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
-const BACKPRESSURE_PINNED_SLOT_FIELD: usize = 32;
-const BASELINE_FIELD_COUNT: usize = 36;
-const TRANSPORT_LATENCY_P50_FIELD: usize = 8;
-const TRANSPORT_LATENCY_P90_FIELD: usize = 9;
-const TRANSPORT_LATENCY_P99_FIELD: usize = 10;
-const TRANSPORT_LATENCY_P999_FIELD: usize = 11;
-const TRANSPORT_LATENCY_P9999_FIELD: usize = 12;
-const END_TO_END_LATENCY_P50_FIELD: usize = 13;
-const END_TO_END_LATENCY_P90_FIELD: usize = 14;
-const END_TO_END_LATENCY_P99_FIELD: usize = 15;
-const END_TO_END_LATENCY_P999_FIELD: usize = 16;
-const END_TO_END_LATENCY_P9999_FIELD: usize = 17;
+const BACKPRESSURE_PINNED_SLOT_FIELD: usize = 56;
+const BASELINE_FIELD_COUNT: usize = 60;
+const TRANSPORT_LATENCY_P50_FIELD: usize = 28;
+const TRANSPORT_LATENCY_P90_FIELD: usize = 29;
+const TRANSPORT_LATENCY_P99_FIELD: usize = 30;
+const TRANSPORT_LATENCY_P999_FIELD: usize = 31;
+const TRANSPORT_LATENCY_P9999_FIELD: usize = 32;
+const END_TO_END_LATENCY_P50_FIELD: usize = 33;
+const END_TO_END_LATENCY_P90_FIELD: usize = 34;
+const END_TO_END_LATENCY_P99_FIELD: usize = 35;
+const END_TO_END_LATENCY_P999_FIELD: usize = 36;
+const END_TO_END_LATENCY_P9999_FIELD: usize = 37;
 const LATENCY_GATE_NUMERATOR: u64 = 105;
 const LATENCY_GATE_DENOMINATOR: u64 = 100;
-const MEASURED_MESSAGES_FIELD: usize = 7;
+const LOAD_MODE_FIELD: usize = 7;
+const MEASURED_MESSAGES_FIELD: usize = 13;
 const PAYLOAD_SIZE_FIELD: usize = 4;
-const PAYLOAD_THROUGHPUT_FIELD: usize = 23;
+const PAYLOAD_THROUGHPUT_FIELD: usize = 43;
 const PUBLISHER_COUNT_FIELD: usize = 5;
-const ROUND_TRIP_P50_FIELD: usize = 18;
-const ROUND_TRIP_P90_FIELD: usize = 19;
-const ROUND_TRIP_P99_FIELD: usize = 20;
-const ROUND_TRIP_P999_FIELD: usize = 21;
+const ROUND_TRIP_P50_FIELD: usize = 38;
+const ROUND_TRIP_P90_FIELD: usize = 39;
+const ROUND_TRIP_P99_FIELD: usize = 40;
+const ROUND_TRIP_P999_FIELD: usize = 41;
 const SCENARIO_FIELD: usize = 1;
-const SKIPPED_MESSAGES_FIELD: usize = 31;
+const SKIPPED_MESSAGES_FIELD: usize = 55;
 const STATUS_FIELD: usize = 0;
 const STATUS_OK: &str = "ok";
 const SUBSCRIBER_COUNT_FIELD: usize = 6;
-const SYSCALLS_FIELD: usize = 28;
+const SYSCALLS_FIELD: usize = 52;
 const THROUGHPUT_GATE_FACTOR: f64 = 0.95;
-const THROUGHPUT_FIELD: usize = 22;
+const THROUGHPUT_FIELD: usize = 42;
 const TRANSPORT_FIELD: usize = 2;
 const WAIT_MODE_FIELD: usize = 3;
-const WARNING_COUNT_FIELD: usize = 30;
-const ALLOCATIONS_FIELD: usize = 29;
+const WARNING_COUNT_FIELD: usize = 54;
+const ALLOCATIONS_FIELD: usize = 53;
 const WILDCARD_KEY: &str = "*";
 
 /// Benchmark baseline path.
@@ -204,6 +205,7 @@ fn parse_baseline_entry(line: &str) -> Result<BaselineEntry, Warning> {
         scenario: parse_key_field(fields[SCENARIO_FIELD], "scenario")?,
         transport: parse_key_field(fields[TRANSPORT_FIELD], "transport")?,
         wait_mode: parse_key_field(fields[WAIT_MODE_FIELD], "wait_mode")?,
+        load_mode: parse_key_field(fields[LOAD_MODE_FIELD], "load_mode")?,
         payload_size: parse_payload_size_field(fields[PAYLOAD_SIZE_FIELD])?,
         publisher_count: parse_field(fields[PUBLISHER_COUNT_FIELD], "publisher_count")?,
         subscriber_count: parse_field(fields[SUBSCRIBER_COUNT_FIELD], "subscriber_count")?,
@@ -366,6 +368,7 @@ struct BaselineEntry {
     scenario: String,
     transport: String,
     wait_mode: String,
+    load_mode: String,
     payload_size: usize,
     publisher_count: u8,
     subscriber_count: u8,
@@ -398,6 +401,7 @@ impl BaselineEntry {
         self.scenario == result.scenario
             && self.transport == result.transport.as_str()
             && self.wait_mode == result.wait_mode.as_str()
+            && self.load_mode == result.load_mode.as_str()
             && self.payload_size == result.payload_size
             && self.publisher_count == result.publisher_count
             && self.subscriber_count == result.subscriber_count
@@ -408,6 +412,7 @@ impl BaselineEntry {
         self.scenario == other.scenario
             && self.transport == other.transport
             && self.wait_mode == other.wait_mode
+            && self.load_mode == other.load_mode
             && self.payload_size == other.payload_size
             && self.publisher_count == other.publisher_count
             && self.subscriber_count == other.subscriber_count
@@ -416,182 +421,5 @@ impl BaselineEntry {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use crate::transport_kind::TransportKind;
-    use crate::wait_mode::WaitMode;
-
-    use super::*;
-
-    const BASELINE_NAME_PREFIX: &str = "rbus-baseline-test";
-    const TEST_SCENARIO: &str = "four-publishers-eight-subscribers";
-    const ZERO_PAYLOAD_SIZE: usize = 0;
-    const TEST_PAYLOAD_SIZE: usize = 64;
-    const TEST_THROUGHPUT: f64 = 1_000.0;
-
-    #[test]
-    fn full_baseline_entry_allows_matching_result() {
-        let path = write_baseline(
-            "full",
-            &baseline_line(
-                TEST_SCENARIO,
-                "rbus-loaned-metadata-only",
-                TEST_PAYLOAD_SIZE,
-                100,
-                0,
-            ),
-        );
-        let result = benchmark_result(100);
-        enforce_regression_gates(&path, &[result]).expect("baseline should pass");
-        remove_baseline(path);
-    }
-
-    #[test]
-    fn baseline_gate_rejects_zero_payload_key() {
-        let path = write_baseline(
-            "zero-payload",
-            &baseline_line(
-                TEST_SCENARIO,
-                "rbus-loaned-metadata-only",
-                ZERO_PAYLOAD_SIZE,
-                100,
-                0,
-            ),
-        );
-        let result = benchmark_result(100);
-        assert!(enforce_regression_gates(&path, &[result]).is_err());
-        remove_baseline(path);
-    }
-
-    #[test]
-    fn baseline_gate_rejects_missing_key() {
-        let path = write_baseline(
-            "missing",
-            &baseline_line(TEST_SCENARIO, "unix-socket", TEST_PAYLOAD_SIZE, 100, 0),
-        );
-        let result = benchmark_result(100);
-        assert!(enforce_regression_gates(&path, &[result]).is_err());
-        remove_baseline(path);
-    }
-
-    #[test]
-    fn baseline_gate_rejects_latency_regression() {
-        let path = write_baseline(
-            "latency",
-            &baseline_line(
-                TEST_SCENARIO,
-                "rbus-loaned-metadata-only",
-                TEST_PAYLOAD_SIZE,
-                10,
-                0,
-            ),
-        );
-        let result = benchmark_result(100);
-        assert!(enforce_regression_gates(&path, &[result]).is_err());
-        remove_baseline(path);
-    }
-
-    #[test]
-    fn baseline_gate_rejects_warning_regression() {
-        let path = write_baseline(
-            "warning",
-            &baseline_line(
-                TEST_SCENARIO,
-                "rbus-loaned-metadata-only",
-                TEST_PAYLOAD_SIZE,
-                100,
-                0,
-            ),
-        );
-        let mut result = benchmark_result(100);
-        result.warning_count = 1;
-        assert!(enforce_regression_gates(&path, &[result]).is_err());
-        remove_baseline(path);
-    }
-
-    fn benchmark_result(latency_ns: u64) -> BenchmarkResult {
-        BenchmarkResult {
-            scenario: TEST_SCENARIO,
-            transport: TransportKind::RbusLoanedMetadataOnly,
-            wait_mode: WaitMode::BusyPoll,
-            payload_size: TEST_PAYLOAD_SIZE,
-            publisher_count: 1,
-            subscriber_count: 1,
-            measured_messages: 1,
-            transport_latency_p50_ns: latency_ns,
-            transport_latency_p90_ns: latency_ns,
-            transport_latency_p99_ns: latency_ns,
-            transport_latency_p999_ns: latency_ns,
-            transport_latency_p9999_ns: latency_ns,
-            end_to_end_latency_p50_ns: latency_ns,
-            end_to_end_latency_p90_ns: latency_ns,
-            end_to_end_latency_p99_ns: latency_ns,
-            end_to_end_latency_p999_ns: latency_ns,
-            end_to_end_latency_p9999_ns: latency_ns,
-            round_trip_p50_ns: 0,
-            round_trip_p90_ns: 0,
-            round_trip_p99_ns: 0,
-            round_trip_p999_ns: 0,
-            throughput_messages_per_second: TEST_THROUGHPUT,
-            payload_throughput_gib_per_second: 0.0,
-            cpu_utilization_per_mille: 0,
-            rss_bytes: 0,
-            pss_bytes: 0,
-            context_switches: 0,
-            syscalls_per_message: 0.0,
-            allocations_per_message: 0.0,
-            warning_count: 0,
-            skipped_messages: 0,
-            backpressure_pinned_slot: 0,
-            startup_latency_ns: 0,
-            attach_latency_ns: 0,
-            orchestration_wall_time_ns: 0,
-        }
-    }
-
-    fn baseline_line(
-        scenario: &str,
-        transport: &str,
-        payload_size: usize,
-        latency_ns: u64,
-        warning_count: u64,
-    ) -> String {
-        format!(
-            concat!(
-                "ok,{},{},busy-poll,{},1,1,1,",
-                "{},{},{},{},{},{},{},{},{},{},",
-                "0,0,0,0,{:.6},0.000000000,0,0,0,0,",
-                "0.000000,0.000000,{},0,0,0,0,0"
-            ),
-            scenario,
-            transport,
-            payload_size,
-            latency_ns,
-            latency_ns,
-            latency_ns,
-            latency_ns,
-            latency_ns,
-            latency_ns,
-            latency_ns,
-            latency_ns,
-            latency_ns,
-            latency_ns,
-            TEST_THROUGHPUT,
-            warning_count
-        )
-    }
-
-    fn write_baseline(name: &str, line: &str) -> PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "{BASELINE_NAME_PREFIX}-{}-{name}.csv",
-            std::process::id()
-        ));
-        std::fs::write(&path, format!("{CSV_HEADER}\n{line}\n")).expect("baseline should write");
-        path
-    }
-
-    fn remove_baseline(path: PathBuf) {
-        std::fs::remove_file(path).expect("baseline should remove");
-    }
-}
+#[path = "baseline_tests.rs"]
+mod baseline_tests;

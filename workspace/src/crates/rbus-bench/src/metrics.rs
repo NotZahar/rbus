@@ -1,3 +1,4 @@
+use crate::load_mode::{LoadMode, RateScope};
 use crate::transport_kind::TransportKind;
 use crate::wait_mode::WaitMode;
 
@@ -36,8 +37,48 @@ pub struct BenchmarkResult {
     pub publisher_count: u8,
     /// Subscriber runtime metadata
     pub subscriber_count: u8,
+    /// Benchmark metadata
+    pub load_mode: LoadMode,
+    /// Publisher runtime metadata
+    pub rate_hz: f64,
+    /// Publisher runtime metadata
+    pub rate_scope: RateScope,
+    /// Benchmark metadata
+    pub duration_ms: u64,
+    /// Publisher runtime metadata
+    pub configured_messages_per_publisher: u32,
+    /// Publisher runtime metadata
+    pub actual_messages_per_publisher: u32,
     /// Internal documentation
     pub measured_messages: u64,
+    /// Publisher runtime metadata
+    pub publish_deadline_miss_count: u64,
+    /// Publisher runtime metadata
+    pub publish_lateness_p50_ns: u64,
+    /// Publisher runtime metadata
+    pub publish_lateness_p90_ns: u64,
+    /// Publisher runtime metadata
+    pub publish_lateness_p99_ns: u64,
+    /// Publisher runtime metadata
+    pub publish_lateness_max_ns: u64,
+    /// Publisher runtime metadata
+    pub inter_publish_gap_p50_ns: u64,
+    /// Publisher runtime metadata
+    pub inter_publish_gap_p99_ns: u64,
+    /// Subscriber runtime metadata
+    pub inter_receive_gap_p50_ns: u64,
+    /// Subscriber runtime metadata
+    pub inter_receive_gap_p99_ns: u64,
+    /// Benchmark metadata
+    pub backlog_metric_available: bool,
+    /// Subscriber runtime metadata
+    pub ring_backlog_p50_messages: u64,
+    /// Subscriber runtime metadata
+    pub ring_backlog_p90_messages: u64,
+    /// Subscriber runtime metadata
+    pub ring_backlog_p99_messages: u64,
+    /// Subscriber runtime metadata
+    pub ring_backlog_max_messages: u64,
     /// p50 transport latency
     pub transport_latency_p50_ns: u64,
     /// p90 transport latency
@@ -70,6 +111,14 @@ pub struct BenchmarkResult {
     pub throughput_messages_per_second: f64,
     /// Effective payload throughput GiB/sec
     pub payload_throughput_gib_per_second: f64,
+    /// Unique publish throughput messages/sec
+    pub unique_publish_messages_per_second: f64,
+    /// Delivered throughput messages/sec
+    pub delivered_messages_per_second: f64,
+    /// Actual payload write throughput GiB/sec
+    pub actual_payload_write_gib_per_second: f64,
+    /// Effective payload delivery throughput GiB/sec
+    pub effective_payload_delivery_gib_per_second: f64,
     /// Benchmark metadata
     pub cpu_utilization_per_mille: u64,
     /// Benchmark metadata
@@ -113,16 +162,26 @@ pub struct LatencyPercentiles {
 
 impl BenchmarkResult {
     /// Benchmark metadata
-    pub fn from_samples(
-        context: BenchmarkResultContext,
-        transport_latency_samples: &mut [u64],
-        end_to_end_latency_samples: &mut [u64],
-        round_trip_samples: &mut [u64],
-    ) -> Self {
+    pub fn from_samples(context: BenchmarkResultContext, samples: BenchmarkSampleSets<'_>) -> Self {
+        let transport_latency_samples = samples.transport_latency_samples;
+        let end_to_end_latency_samples = samples.end_to_end_latency_samples;
+        let round_trip_samples = samples.round_trip_samples;
+        let publish_lateness_samples = samples.publish_lateness_samples;
+        let inter_publish_gap_samples = samples.inter_publish_gap_samples;
+        let inter_receive_gap_samples = samples.inter_receive_gap_samples;
+        let ring_backlog_samples = samples.ring_backlog_samples;
         let transport_latency = LatencyPercentiles::from_samples(transport_latency_samples);
         let end_to_end_latency = LatencyPercentiles::from_samples(end_to_end_latency_samples);
         let round_trip = LatencyPercentiles::from_samples(round_trip_samples);
-        let throughput =
+        let publish_lateness = LatencyPercentiles::from_samples(publish_lateness_samples);
+        let inter_publish_gap = LatencyPercentiles::from_samples(inter_publish_gap_samples);
+        let inter_receive_gap = LatencyPercentiles::from_samples(inter_receive_gap_samples);
+        let ring_backlog = LatencyPercentiles::from_samples(ring_backlog_samples);
+        let unique_publish_messages_per_second = throughput_messages_per_second(
+            context.unique_published_messages,
+            context.measured_window_ns,
+        );
+        let delivered_messages_per_second =
             throughput_messages_per_second(context.measured_messages, context.measured_window_ns);
         let allocations_per_message =
             per_message(context.allocation_count, context.measured_messages);
@@ -133,7 +192,27 @@ impl BenchmarkResult {
             payload_size: context.payload_size,
             publisher_count: context.publisher_count,
             subscriber_count: context.subscriber_count,
+            load_mode: context.load_mode,
+            rate_hz: context.rate_hz,
+            rate_scope: context.rate_scope,
+            duration_ms: context.duration_ms,
+            configured_messages_per_publisher: context.configured_messages_per_publisher,
+            actual_messages_per_publisher: context.actual_messages_per_publisher,
             measured_messages: context.measured_messages,
+            publish_deadline_miss_count: context.publish_deadline_miss_count,
+            publish_lateness_p50_ns: publish_lateness.p50_ns,
+            publish_lateness_p90_ns: publish_lateness.p90_ns,
+            publish_lateness_p99_ns: publish_lateness.p99_ns,
+            publish_lateness_max_ns: max_sample(publish_lateness_samples),
+            inter_publish_gap_p50_ns: inter_publish_gap.p50_ns,
+            inter_publish_gap_p99_ns: inter_publish_gap.p99_ns,
+            inter_receive_gap_p50_ns: inter_receive_gap.p50_ns,
+            inter_receive_gap_p99_ns: inter_receive_gap.p99_ns,
+            backlog_metric_available: context.backlog_metric_available,
+            ring_backlog_p50_messages: ring_backlog.p50_ns,
+            ring_backlog_p90_messages: ring_backlog.p90_ns,
+            ring_backlog_p99_messages: ring_backlog.p99_ns,
+            ring_backlog_max_messages: max_sample(ring_backlog_samples),
             transport_latency_p50_ns: transport_latency.p50_ns,
             transport_latency_p90_ns: transport_latency.p90_ns,
             transport_latency_p99_ns: transport_latency.p99_ns,
@@ -148,9 +227,19 @@ impl BenchmarkResult {
             round_trip_p90_ns: round_trip.p90_ns,
             round_trip_p99_ns: round_trip.p99_ns,
             round_trip_p999_ns: round_trip.p999_ns,
-            throughput_messages_per_second: throughput,
+            throughput_messages_per_second: delivered_messages_per_second,
             payload_throughput_gib_per_second: payload_throughput_gib_per_second(
-                throughput,
+                delivered_messages_per_second,
+                context.payload_size,
+            ),
+            unique_publish_messages_per_second,
+            delivered_messages_per_second,
+            actual_payload_write_gib_per_second: payload_throughput_gib_per_second(
+                unique_publish_messages_per_second,
+                context.payload_size,
+            ),
+            effective_payload_delivery_gib_per_second: payload_throughput_gib_per_second(
+                delivered_messages_per_second,
                 context.payload_size,
             ),
             cpu_utilization_per_mille: cpu_utilization_per_mille(
@@ -187,8 +276,22 @@ pub struct BenchmarkResultContext {
     pub publisher_count: u8,
     /// Subscriber runtime metadata
     pub subscriber_count: u8,
+    /// Benchmark metadata
+    pub load_mode: LoadMode,
+    /// Publisher runtime metadata
+    pub rate_hz: f64,
+    /// Publisher runtime metadata
+    pub rate_scope: RateScope,
+    /// Benchmark metadata
+    pub duration_ms: u64,
+    /// Publisher runtime metadata
+    pub configured_messages_per_publisher: u32,
+    /// Publisher runtime metadata
+    pub actual_messages_per_publisher: u32,
     /// Internal documentation
     pub measured_messages: u64,
+    /// Publisher runtime metadata
+    pub unique_published_messages: u64,
     /// Internal documentation
     pub measured_window_ns: u64,
     /// Internal documentation
@@ -211,10 +314,32 @@ pub struct BenchmarkResultContext {
     pub skipped_messages: u64,
     /// Backpressure count
     pub backpressure_pinned_slot: u64,
+    /// Publisher runtime metadata
+    pub publish_deadline_miss_count: u64,
+    /// Benchmark metadata
+    pub backlog_metric_available: bool,
     /// Startup latency
     pub startup_latency_ns: u64,
     /// Attach latency
     pub attach_latency_ns: u64,
+}
+
+/// Benchmark samples
+pub struct BenchmarkSampleSets<'a> {
+    /// p50 transport latency
+    pub transport_latency_samples: &'a mut [u64],
+    /// p50 end-to-end latency
+    pub end_to_end_latency_samples: &'a mut [u64],
+    /// Round-trip latency
+    pub round_trip_samples: &'a mut [u64],
+    /// Publisher deadline lateness
+    pub publish_lateness_samples: &'a mut [u64],
+    /// Publisher gap samples
+    pub inter_publish_gap_samples: &'a mut [u64],
+    /// Subscriber gap samples
+    pub inter_receive_gap_samples: &'a mut [u64],
+    /// Rbus backlog samples
+    pub ring_backlog_samples: &'a mut [u64],
 }
 
 impl LatencyPercentiles {
@@ -242,6 +367,10 @@ fn percentile(samples: &[u64], numerator: u64, denominator: u64) -> u64 {
         .saturating_add(denominator - 1)
         / denominator;
     samples[rank as usize]
+}
+
+fn max_sample(samples: &[u64]) -> u64 {
+    samples.iter().copied().max().unwrap_or(0)
 }
 
 fn throughput_messages_per_second(messages: u64, wall_time_ns: u64) -> f64 {

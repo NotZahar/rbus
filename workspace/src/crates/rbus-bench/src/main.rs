@@ -5,8 +5,10 @@ mod blocking_wait;
 mod daemon_process;
 mod harness;
 mod hot_path_syscall;
+mod load_mode;
 mod metrics;
 mod output_format;
+mod pace;
 mod payload;
 mod pinning;
 mod process;
@@ -14,6 +16,7 @@ mod report;
 mod scenarios;
 mod suite;
 mod suite_matrix;
+mod suite_process;
 mod suite_ready;
 mod suite_repetition;
 mod suite_worker_output;
@@ -26,6 +29,7 @@ mod transports;
 mod wait_mode;
 mod worker;
 mod worker_args;
+mod worker_common;
 
 use std::process::ExitCode;
 

@@ -4,26 +4,34 @@ use rbus::{Bus, Publisher, Subscriber, TopicConfig};
 use rbus_core::warning::{Warning, WarningCode};
 
 use crate::allocation;
+use crate::load_mode::LoadMode;
+use crate::pace::{PaceSchedule, spin_tail_ns_from_us, wait_until};
 use crate::system_metrics::{ProcessSystemSnapshot, monotonic_time_ns};
-use crate::timestamp_payload::{
-    PayloadTimestamps, TIMESTAMP_BYTES, decode_timestamps, encode_timestamps,
-};
+use crate::timestamp_payload::{PayloadTimestamps, decode_timestamps, encode_timestamps};
 use crate::transport_kind::TransportKind;
 use crate::wait_mode::WaitMode;
 pub use crate::worker_args::{WorkerArguments, WorkerReport, WorkerRole};
+use crate::worker_common::{
+    invalid_argument, print_one_way_latencies, print_prefixed_samples, print_report,
+    usize_from_u64, validate_worker_arguments, wait_start_file, wait_warmup_start_file,
+    write_attach_ready_file, write_ready_file,
+};
 
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
 const FILL_BYTE: u8 = 0xA5;
+const PACING_PREWARM_SLEEP_NS: u64 = 1;
 const SLOW_SUBSCRIBER_DELAY_MICROS: u64 = 100;
-const READY_FILE_BYTES: &[u8] = b"ready\n";
 const RECV_TIMEOUT_MS: u64 = 5_000;
-const START_WAIT_POLL_INTERVAL_MS: u64 = 1;
-const START_WAIT_TIMEOUT_MS: u64 = 300_000;
+const PACED_DRAIN_TIMEOUT_MS: u64 = 5_000;
 const UNSET_TIMESTAMP_NS: u64 = 0;
 
 pub const TRANSPORT_LATENCY_PREFIX: &str = "RBUS_BENCH_TRANSPORT_LATENCY_NS ";
 pub const END_TO_END_LATENCY_PREFIX: &str = "RBUS_BENCH_END_TO_END_LATENCY_NS ";
 pub const ROUND_TRIP_PREFIX: &str = "RBUS_BENCH_ROUND_TRIP_NS ";
+pub const PUBLISH_LATENESS_PREFIX: &str = "RBUS_BENCH_PUBLISH_LATENESS_NS ";
+pub const INTER_PUBLISH_GAP_PREFIX: &str = "RBUS_BENCH_INTER_PUBLISH_GAP_NS ";
+pub const INTER_RECEIVE_GAP_PREFIX: &str = "RBUS_BENCH_INTER_RECEIVE_GAP_NS ";
+pub const BACKLOG_PREFIX: &str = "RBUS_BENCH_BACKLOG_MESSAGES ";
 pub const RESULT_PREFIX: &str = "RBUS_BENCH_WORKER_RESULT ";
 
 /// Benchmark metadata
@@ -69,16 +77,34 @@ fn run_publisher(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> {
     for _message_index in 0..warmup_messages_per_publisher(arguments) {
         publish_one(arguments, &mut publisher, &mut publish_bytes_buffer, true)?;
     }
+    if arguments.load_mode == LoadMode::Paced {
+        prewarm_pacing_driver();
+    }
 
     write_ready_file(arguments)?;
-    wait_start_file(arguments)?;
+    let start_ns = wait_start_file(arguments)?;
+    match arguments.load_mode {
+        LoadMode::Saturated => {
+            run_saturated_publisher(arguments, publisher, publish_bytes_buffer, start_ns)
+        }
+        LoadMode::Paced => {
+            run_paced_publisher(arguments, publisher, publish_bytes_buffer, start_ns)
+        }
+    }
+}
+
+fn run_saturated_publisher(
+    arguments: &WorkerArguments,
+    mut publisher: Publisher,
+    mut publish_bytes_buffer: Vec<u8>,
+    start_ns: u64,
+) -> Result<WorkerReport, Warning> {
     let system_start = ProcessSystemSnapshot::capture()?;
     let allocation_start = allocation::allocation_count();
-    let started_at = monotonic_time_ns()?;
     for _message_index in 0..arguments.messages_per_publisher {
         publish_one(arguments, &mut publisher, &mut publish_bytes_buffer, false)?;
     }
-    let duration_ns = monotonic_time_ns()?.saturating_sub(started_at);
+    let duration_ns = monotonic_time_ns()?.saturating_sub(start_ns);
     let allocations = allocation::allocation_delta(allocation_start);
     let system_delta = ProcessSystemSnapshot::capture()?.delta(system_start);
     let stats = publisher.stats();
@@ -93,6 +119,60 @@ fn run_publisher(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> {
         warnings: stats.warnings_total,
         skipped_messages: stats.skipped_messages,
         backpressure_pinned_slot: stats.backpressure_pinned_slot,
+        publish_deadline_miss_count: 0,
+    })
+}
+
+fn run_paced_publisher(
+    arguments: &WorkerArguments,
+    mut publisher: Publisher,
+    mut publish_bytes_buffer: Vec<u8>,
+    start_ns: u64,
+) -> Result<WorkerReport, Warning> {
+    let rate_hz = arguments.rate_hz.ok_or_else(invalid_argument)?;
+    let schedule = PaceSchedule::new(start_ns, rate_hz);
+    let spin_tail_ns = spin_tail_ns_from_us(arguments.pace_spin_tail_us)?;
+    let miss_threshold_ns = schedule.period_ns()?;
+    let sample_capacity = arguments.messages_per_publisher as usize;
+    let mut publish_lateness = Vec::with_capacity(sample_capacity);
+    let mut inter_publish_gaps = Vec::with_capacity(sample_capacity.saturating_sub(1));
+    let system_start = ProcessSystemSnapshot::capture()?;
+    let mut allocations = 0_u64;
+    let mut previous_publish_ns = None;
+    let mut publish_deadline_miss_count = 0_u64;
+    for message_index in 0..arguments.messages_per_publisher {
+        let deadline_ns = schedule.deadline_ns(message_index)?;
+        let lateness_ns = wait_until(deadline_ns, spin_tail_ns)?;
+        if lateness_ns > miss_threshold_ns {
+            publish_deadline_miss_count = publish_deadline_miss_count.saturating_add(1);
+        }
+        publish_lateness.push(lateness_ns);
+        let allocation_start = allocation::allocation_count();
+        publish_one(arguments, &mut publisher, &mut publish_bytes_buffer, false)?;
+        allocations = allocations.saturating_add(allocation::allocation_delta(allocation_start));
+        let published_at_ns = monotonic_time_ns()?;
+        if let Some(previous_publish_ns) = previous_publish_ns {
+            inter_publish_gaps.push(published_at_ns.saturating_sub(previous_publish_ns));
+        }
+        previous_publish_ns = Some(published_at_ns);
+    }
+    let duration_ns = monotonic_time_ns()?.saturating_sub(start_ns);
+    let system_delta = ProcessSystemSnapshot::capture()?.delta(system_start);
+    print_prefixed_samples(PUBLISH_LATENESS_PREFIX, publish_lateness);
+    print_prefixed_samples(INTER_PUBLISH_GAP_PREFIX, inter_publish_gaps);
+    let stats = publisher.stats();
+    Ok(WorkerReport {
+        messages: u64::from(arguments.messages_per_publisher),
+        duration_ns,
+        allocations,
+        cpu_time_ns: system_delta.cpu_time_ns,
+        context_switches: system_delta.context_switches,
+        rss_bytes: system_delta.rss_bytes,
+        pss_bytes: system_delta.pss_bytes,
+        warnings: stats.warnings_total,
+        skipped_messages: stats.skipped_messages,
+        backpressure_pinned_slot: stats.backpressure_pinned_slot,
+        publish_deadline_miss_count,
     })
 }
 
@@ -107,33 +187,76 @@ fn run_subscriber(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> 
     for _message_index in 0..warmup_messages {
         drop(receive_message(arguments.wait_mode, &subscriber)?);
     }
+    prewarm_subscriber_streams(&subscriber)?;
+    let published_messages_at_start = subscriber.stats().published_messages;
     write_ready_file(arguments)?;
-    wait_start_file(arguments)?;
+    let start_ns = wait_start_file(arguments)?;
 
     let measured_messages =
         u64::from(arguments.publisher_count) * u64::from(arguments.messages_per_publisher);
     let mut transport_latencies = vec![0_u64; usize_from_u64(measured_messages)?];
     let mut end_to_end_latencies = vec![0_u64; usize_from_u64(measured_messages)?];
+    let mut inter_receive_gaps = Vec::with_capacity(transport_latencies.len().saturating_sub(1));
+    let mut backlog_samples = if arguments.transport.is_rbus() {
+        Vec::with_capacity(transport_latencies.len())
+    } else {
+        Vec::new()
+    };
+    let drain_deadline_ns = paced_drain_deadline_ns(arguments, start_ns)?;
     let system_start = ProcessSystemSnapshot::capture()?;
-    let allocation_start = allocation::allocation_count();
-    let started_at = monotonic_time_ns()?;
+    let allocation_start = match arguments.load_mode {
+        LoadMode::Saturated => Some(allocation::allocation_count()),
+        LoadMode::Paced => None,
+    };
+    let mut paced_allocations = 0_u64;
+    let mut previous_receive_ns = None;
+    let mut received_messages = 0_u64;
     for (transport_latency, end_to_end_latency) in transport_latencies
         .iter_mut()
         .zip(end_to_end_latencies.iter_mut())
     {
-        let message = receive_message(arguments.wait_mode, &subscriber)?;
+        let message = match arguments.load_mode {
+            LoadMode::Saturated => receive_message(arguments.wait_mode, &subscriber)?,
+            LoadMode::Paced => {
+                let allocation_start = allocation::allocation_count();
+                let message =
+                    receive_message_until(arguments.wait_mode, &subscriber, drain_deadline_ns)?;
+                paced_allocations = paced_allocations
+                    .saturating_add(allocation::allocation_delta(allocation_start));
+                message
+            }
+        };
         let timestamps = decode_timestamps(message.as_slice())?;
         let received_at = monotonic_time_ns()?;
+        if let Some(previous_receive_ns) = previous_receive_ns {
+            inter_receive_gaps.push(received_at.saturating_sub(previous_receive_ns));
+        }
+        previous_receive_ns = Some(received_at);
         *transport_latency = received_at.saturating_sub(timestamps.transport_ns);
         *end_to_end_latency = received_at.saturating_sub(timestamps.end_to_end_ns);
+        received_messages = received_messages.saturating_add(1);
+        if arguments.transport.is_rbus() {
+            backlog_samples.push(
+                subscriber
+                    .stats()
+                    .published_messages
+                    .saturating_sub(published_messages_at_start)
+                    .saturating_sub(received_messages),
+            );
+        }
         if arguments.slow_subscriber {
             std::thread::sleep(Duration::from_micros(SLOW_SUBSCRIBER_DELAY_MICROS));
         }
     }
-    let duration_ns = monotonic_time_ns()?.saturating_sub(started_at);
-    let allocations = allocation::allocation_delta(allocation_start);
+    let duration_ns = monotonic_time_ns()?.saturating_sub(start_ns);
+    let allocations = match allocation_start {
+        Some(allocation_start) => allocation::allocation_delta(allocation_start),
+        None => paced_allocations,
+    };
     let system_delta = ProcessSystemSnapshot::capture()?.delta(system_start);
     print_one_way_latencies(transport_latencies, end_to_end_latencies);
+    print_prefixed_samples(INTER_RECEIVE_GAP_PREFIX, inter_receive_gaps);
+    print_prefixed_samples(BACKLOG_PREFIX, backlog_samples);
     let stats = subscriber.stats();
     Ok(WorkerReport {
         messages: measured_messages,
@@ -146,6 +269,7 @@ fn run_subscriber(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> 
         warnings: stats.warnings_total,
         skipped_messages: stats.skipped_messages,
         backpressure_pinned_slot: stats.backpressure_pinned_slot,
+        publish_deadline_miss_count: 0,
     })
 }
 
@@ -202,6 +326,7 @@ fn run_ping_responder(arguments: &WorkerArguments) -> Result<WorkerReport, Warni
             .saturating_add(subscriber_stats.warnings_total),
         skipped_messages: subscriber_stats.skipped_messages,
         backpressure_pinned_slot: publisher_stats.backpressure_pinned_slot,
+        publish_deadline_miss_count: 0,
     })
 }
 
@@ -263,6 +388,7 @@ fn run_ping_requester(arguments: &WorkerArguments) -> Result<WorkerReport, Warni
             .saturating_add(subscriber_stats.warnings_total),
         skipped_messages: subscriber_stats.skipped_messages,
         backpressure_pinned_slot: publisher_stats.backpressure_pinned_slot,
+        publish_deadline_miss_count: 0,
     })
 }
 
@@ -383,121 +509,54 @@ fn receive_message(
     }
 }
 
+fn receive_message_until(
+    wait_mode: WaitMode,
+    subscriber: &Subscriber,
+    deadline_ns: u64,
+) -> Result<rbus::MessageRef<'_>, Warning> {
+    match wait_mode {
+        WaitMode::BusyPoll => loop {
+            if let Some(message) = subscriber.try_recv()? {
+                return Ok(message);
+            }
+            if monotonic_time_ns()? > deadline_ns {
+                return Err(Warning::new(
+                    WarningCode::Timeout,
+                    COMPONENT_RBUS_BENCH,
+                    "paced_receive_drain",
+                ));
+            }
+            core::hint::spin_loop();
+        },
+        WaitMode::Recv | WaitMode::RecvTimeout => receive_message(wait_mode, subscriber),
+    }
+}
+
+fn paced_drain_deadline_ns(arguments: &WorkerArguments, start_ns: u64) -> Result<u64, Warning> {
+    if arguments.load_mode == LoadMode::Saturated {
+        return Ok(u64::MAX);
+    }
+    let rate_hz = arguments.rate_hz.ok_or_else(invalid_argument)?;
+    let schedule = PaceSchedule::new(start_ns, rate_hz);
+    let last_message_index = arguments.messages_per_publisher.saturating_sub(1);
+    schedule
+        .deadline_ns(last_message_index)?
+        .checked_add(schedule.period_ns()?)
+        .and_then(|deadline| {
+            deadline.checked_add(Duration::from_millis(PACED_DRAIN_TIMEOUT_MS).as_nanos() as u64)
+        })
+        .ok_or_else(invalid_argument)
+}
+
 fn topic_config(arguments: &WorkerArguments) -> TopicConfig {
     TopicConfig::new(arguments.payload_size, arguments.depth)
 }
 
-fn write_ready_file(arguments: &WorkerArguments) -> Result<(), Warning> {
-    match &arguments.ready_file {
-        Some(path) => std::fs::write(path, READY_FILE_BYTES)
-            .map_err(|error| warning_from_io(error, "write_ready_file")),
-        None => Ok(()),
-    }
+fn prewarm_pacing_driver() {
+    std::thread::sleep(Duration::from_nanos(PACING_PREWARM_SLEEP_NS));
 }
 
-fn write_attach_ready_file(arguments: &WorkerArguments) -> Result<(), Warning> {
-    match &arguments.attach_ready_file {
-        Some(path) => std::fs::write(path, READY_FILE_BYTES)
-            .map_err(|error| warning_from_io(error, "write_attach_ready_file")),
-        None => Ok(()),
-    }
-}
-
-fn wait_start_file(arguments: &WorkerArguments) -> Result<(), Warning> {
-    wait_flag_file(&arguments.start_file)
-}
-
-fn wait_warmup_start_file(arguments: &WorkerArguments) -> Result<(), Warning> {
-    wait_flag_file(&arguments.warmup_start_file)
-}
-
-fn wait_flag_file(path: &Option<std::path::PathBuf>) -> Result<(), Warning> {
-    let Some(path) = path else {
-        return Ok(());
-    };
-    let started_at = monotonic_time_ns()?;
-    loop {
-        if path.exists() {
-            return Ok(());
-        }
-        if monotonic_time_ns()?.saturating_sub(started_at)
-            > Duration::from_millis(START_WAIT_TIMEOUT_MS).as_nanos() as u64
-        {
-            return Err(invalid_argument());
-        }
-        std::thread::sleep(Duration::from_millis(START_WAIT_POLL_INTERVAL_MS));
-    }
-}
-
-fn print_one_way_latencies(transport_latencies: Vec<u64>, end_to_end_latencies: Vec<u64>) {
-    for latency in transport_latencies {
-        println!("{TRANSPORT_LATENCY_PREFIX}{latency}");
-    }
-    for latency in end_to_end_latencies {
-        println!("{END_TO_END_LATENCY_PREFIX}{latency}");
-    }
-}
-
-fn print_report(role: WorkerRole, report: WorkerReport) {
-    println!(
-        concat!(
-            "{}role={} messages={} duration_ns={} allocations={} ",
-            "cpu_time_ns={} context_switches={} rss_bytes={} pss_bytes={} ",
-            "warnings={} skipped_messages={} backpressure_pinned_slot={}"
-        ),
-        RESULT_PREFIX,
-        role.as_str(),
-        report.messages,
-        report.duration_ns,
-        report.allocations,
-        report.cpu_time_ns,
-        report.context_switches,
-        report.rss_bytes,
-        report.pss_bytes,
-        report.warnings,
-        report.skipped_messages,
-        report.backpressure_pinned_slot
-    );
-}
-
-fn validate_worker_arguments(arguments: &WorkerArguments) -> Result<(), Warning> {
-    if arguments.domain.is_empty()
-        || arguments.topic.is_empty()
-        || arguments.payload_size < TIMESTAMP_BYTES
-        || arguments.depth == 0
-        || !arguments.depth.is_power_of_two()
-        || arguments.worker_index >= arguments.publisher_count.max(arguments.subscriber_count)
-        || arguments.publisher_count == 0
-        || arguments.subscriber_count == 0
-        || arguments.messages_per_publisher == 0
-    {
-        return Err(invalid_argument());
-    }
+fn prewarm_subscriber_streams(subscriber: &Subscriber) -> Result<(), Warning> {
+    while subscriber.try_recv()?.is_some() {}
     Ok(())
-}
-
-fn usize_from_u64(value: u64) -> Result<usize, Warning> {
-    usize::try_from(value).map_err(|_| {
-        Warning::new(
-            WarningCode::ResourceLimit,
-            COMPONENT_RBUS_BENCH,
-            "usize_from_u64",
-        )
-    })
-}
-
-fn invalid_argument() -> Warning {
-    Warning::new(
-        WarningCode::InvalidConfig,
-        COMPONENT_RBUS_BENCH,
-        "WorkerArguments::parse",
-    )
-}
-
-fn warning_from_io(error: std::io::Error, operation: &'static str) -> Warning {
-    match error.raw_os_error() {
-        Some(errno) => Warning::new(WarningCode::SyscallFailed, COMPONENT_RBUS_BENCH, operation)
-            .with_os_errno(errno),
-        None => Warning::new(WarningCode::SyscallFailed, COMPONENT_RBUS_BENCH, operation),
-    }
 }

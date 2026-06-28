@@ -9,18 +9,9 @@ import { workspacePaths } from "./workspace-paths.ts";
 const defaultOutputPath = "benches/baselines/rbus_suite_baseline_x86_64.csv";
 const defaultMessages = "100000";
 const defaultRuns = "1";
-const csvFieldCount = 36;
-const latencyThresholdMultiplier = 2;
-const latencyThresholdPaddingNs = 50_000;
-const throughputThresholdMultiplier = 0.8;
-const syscallThresholdMultiplier = 1.25;
-const syscallThresholdPadding = 16;
+const csvFieldCount = 60;
 const statusFieldIndex = 0;
 const statusOk = "ok";
-const syscallsPerMessageFieldIndex = 28;
-const throughputMessagesPerSecondFieldIndex = 22;
-const payloadThroughputGibPerSecondFieldIndex = 23;
-const latencyFieldIndices = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] as const;
 
 class ScriptError extends Error {
   readonly exitCode: number;
@@ -118,10 +109,9 @@ function runReference(options: ReferenceOptions) {
     suiteArguments.splice(1, 0, "--matrix-smoke");
   }
   const csv = runCommand(workspacePaths.rbusBenchBinary, suiteArguments, true);
-  const thresholdCsv = thresholdCsvFromReference(csv);
-  const rows = validateCsv(thresholdCsv);
+  const rows = validateCsv(csv);
   const outputPath = resolve(workspacePaths.sourceRoot, options.outputPath);
-  writeFileSync(outputPath, thresholdCsv);
+  writeFileSync(outputPath, csv);
   console.log(JSON.stringify({
     status: "ok",
     output: outputPath,
@@ -149,80 +139,6 @@ function validateCsv(csv: string) {
     }
   }
   return lines.length - 1;
-}
-
-function thresholdCsvFromReference(csv: string) {
-  const lines = csv.trimEnd().split("\n");
-  if (lines.length < 2) {
-    throw new ScriptError("reference suite produced an empty CSV");
-  }
-  return `${lines[0]}\n${lines.slice(1).map(thresholdLineFromReference).join("\n")}\n`;
-}
-
-function thresholdLineFromReference(line: string) {
-  const fields = line.split(",");
-  if (fields.length !== csvFieldCount) {
-    throw new ScriptError(`unexpected suite CSV field count:\n${line}`);
-  }
-  if (fields[statusFieldIndex] !== statusOk) {
-    throw new ScriptError(`non-ok benchmark row:\n${line}`);
-  }
-  for (const fieldIndex of latencyFieldIndices) {
-    fields[fieldIndex] = latencyThreshold(fields[fieldIndex]);
-  }
-  fields[throughputMessagesPerSecondFieldIndex] = throughputThreshold(
-    fields[throughputMessagesPerSecondFieldIndex],
-    6,
-  );
-  fields[payloadThroughputGibPerSecondFieldIndex] = throughputThreshold(
-    fields[payloadThroughputGibPerSecondFieldIndex],
-    9,
-  );
-  fields[syscallsPerMessageFieldIndex] = syscallThreshold(fields[syscallsPerMessageFieldIndex]);
-  return fields.join(",");
-}
-
-function latencyThreshold(value: string) {
-  const measuredValue = parseInteger(value);
-  if (measuredValue === 0) {
-    return value;
-  }
-  return String(
-    Math.ceil(
-      Math.max(
-        measuredValue * latencyThresholdMultiplier,
-        measuredValue + latencyThresholdPaddingNs,
-      ),
-    ),
-  );
-}
-
-function throughputThreshold(value: string, fractionDigits: number) {
-  const measuredValue = parseFiniteNumber(value);
-  return (measuredValue * throughputThresholdMultiplier).toFixed(fractionDigits);
-}
-
-function syscallThreshold(value: string) {
-  const measuredValue = parseFiniteNumber(value);
-  if (measuredValue === 0) {
-    return value;
-  }
-  return (measuredValue * syscallThresholdMultiplier + syscallThresholdPadding).toFixed(6);
-}
-
-function parseInteger(value: string) {
-  if (!/^[0-9]+$/.test(value)) {
-    throw new ScriptError(`invalid integer field: ${value}`);
-  }
-  return Number.parseInt(value, 10);
-}
-
-function parseFiniteNumber(value: string) {
-  const measuredValue = Number(value);
-  if (!Number.isFinite(measuredValue) || measuredValue < 0) {
-    throw new ScriptError(`invalid numeric field: ${value}`);
-  }
-  return measuredValue;
 }
 
 try {

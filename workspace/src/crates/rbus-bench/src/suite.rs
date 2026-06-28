@@ -1,46 +1,46 @@
-use std::io::{Read, StdoutLock, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
-use std::thread::JoinHandle;
-use std::time::Duration;
+use std::io::{StdoutLock, Write};
+use std::path::Path;
 
 use rbus_core::warning::{Warning, WarningCode};
 
 use crate::args::SuiteOptions;
 use crate::baseline::enforce_regression_gates;
 use crate::daemon_process::DaemonProcess;
-use crate::metrics::{BenchmarkResult, BenchmarkResultContext};
+use crate::load_mode::LoadMode;
+use crate::metrics::{BenchmarkResult, BenchmarkResultContext, BenchmarkSampleSets};
 use crate::output_format::OutputFormat;
 use crate::report::{CSV_HEADER, SuiteReport, result_csv_line};
 use crate::suite_matrix::{
     depth_for, measured_messages, messages_per_publisher_for_payload, selected_payload_sizes,
-    selected_topologies, selected_wait_modes,
+    selected_topologies, selected_transports, selected_wait_modes,
+};
+use crate::suite_process::{
+    parse_worker_output, spawn_worker, wait_for_worker, wait_worker_ready_files,
 };
 use crate::suite_ready::{
     attach_ready_file, create_ready_directory, ready_directory, remove_ready_directory, start_file,
-    wait_paths_or_worker_exit, warmup_start_file, worker_ready_file, write_start_file,
-    write_warmup_start_file,
+    warmup_start_file, worker_ready_file, write_start_file, write_warmup_start_file,
 };
 use crate::suite_repetition::aggregate_repeated_results;
 use crate::suite_worker_output::ParsedWorkerOutput;
 use crate::syscall_measurement::{SyscallMeasurementContext, measure_syscalls_per_message};
 use crate::system_metrics::monotonic_time_ns;
 use crate::topology::{ScenarioKind, Topology};
-use crate::transport_kind::{SUITE_TRANSPORTS, TransportKind};
+use crate::transport_kind::TransportKind;
 use crate::wait_mode::WaitMode;
-use crate::worker::{
-    END_TO_END_LATENCY_PREFIX, RESULT_PREFIX, ROUND_TRIP_PREFIX, TRANSPORT_LATENCY_PREFIX,
-    WorkerReport, WorkerRole,
-};
+use crate::worker::{WorkerReport, WorkerRole};
 
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
 const SUITE_DOMAIN_PREFIX: &str = "rbus-suite";
-const WORKER_WAIT_POLL_INTERVAL_MS: u64 = 1;
-const WORKER_REPORT_FIELD_COUNT: usize = 11;
-const WORKER_TIMEOUT_MS: u64 = 300_000;
 const SUITE_TIMEOUT_MINUTES: u64 = 20;
 const SECONDS_PER_MINUTE: u64 = 60;
 const NANOS_PER_SECOND: u64 = 1_000_000_000;
+const NANOS_PER_MILLISECOND: u64 = 1_000_000;
+const BYTES_PER_GIB: f64 = 1024.0 * 1024.0 * 1024.0;
+const MAX_CONFIGURED_ACTUAL_WRITE_GIB_PER_SECOND: f64 = 8.0;
+const MAX_CONFIGURED_EFFECTIVE_DELIVERY_GIB_PER_SECOND: f64 = 64.0;
+const PACED_RATE_TOLERANCE_RATIO: f64 = 0.01;
+const MAX_LOW_RATE_BACKLOG_P99_MESSAGES: u64 = 1;
 const SUITE_TIMEOUT_NS: u64 = SUITE_TIMEOUT_MINUTES * SECONDS_PER_MINUTE * NANOS_PER_SECOND;
 
 pub fn run_suite(options: &SuiteOptions) -> Result<SuiteReport, Warning> {
@@ -66,14 +66,21 @@ fn run_suite_internal(
     let topologies = selected_topologies(options);
     let payload_sizes = selected_payload_sizes(options);
     let wait_modes = selected_wait_modes(options);
-    let transports = SUITE_TRANSPORTS;
+    let transports = selected_transports(options);
+    if topologies.is_empty()
+        || payload_sizes.is_empty()
+        || wait_modes.is_empty()
+        || transports.is_empty()
+    {
+        return Err(warning("run_suite::empty_matrix"));
+    }
     let mut results = Vec::new();
     let mut run_index = 0_usize;
 
-    for topology in topologies {
-        for payload_size in payload_sizes {
-            for wait_mode in wait_modes {
-                for transport in transports {
+    for topology in &topologies {
+        for payload_size in &payload_sizes {
+            for wait_mode in &wait_modes {
+                for transport in &transports {
                     if transport.supports_scenario(topology.kind) {
                         let mut repeated_results =
                             Vec::with_capacity(options.runs_per_scenario as usize);
@@ -94,6 +101,9 @@ fn run_suite_internal(
                             run_index = run_index.saturating_add(1);
                         }
                         let result = aggregate_repeated_results(&mut repeated_results);
+                        if options.gate_enabled {
+                            validate_paced_result(&result)?;
+                        }
                         if let Some(stream) = csv_stream.as_deref_mut() {
                             write_csv_result(stream, &result)?;
                         }
@@ -119,6 +129,46 @@ fn run_suite_internal(
         transports.len(),
         results,
     ))
+}
+
+fn validate_paced_result(result: &BenchmarkResult) -> Result<(), Warning> {
+    if result.load_mode == LoadMode::Saturated {
+        return Ok(());
+    }
+    if result.warning_count != 0 {
+        return Err(warning("paced_gate::warnings"));
+    }
+    if result.skipped_messages != 0 {
+        return Err(warning("paced_gate::skipped_messages"));
+    }
+    if result.backpressure_pinned_slot != 0 {
+        return Err(warning("paced_gate::backpressure"));
+    }
+    if result.transport.is_rbus()
+        && result.wait_mode == WaitMode::BusyPoll
+        && result.syscalls_per_message > 0.0
+    {
+        return Err(warning("paced_gate::syscalls"));
+    }
+    if matches!(
+        result.transport,
+        TransportKind::RbusLoanedMetadataOnly | TransportKind::RbusLoanedFill
+    ) && result.allocations_per_message > 0.0
+    {
+        return Err(warning("paced_gate::allocations"));
+    }
+    let configured_rate = f64::from(result.publisher_count) * result.rate_hz;
+    let rate_delta = (result.unique_publish_messages_per_second - configured_rate).abs();
+    if rate_delta > configured_rate * PACED_RATE_TOLERANCE_RATIO {
+        return Err(warning("paced_gate::rate"));
+    }
+    if result.scenario == "one-publisher-one-subscriber"
+        && result.transport.is_rbus()
+        && result.ring_backlog_p99_messages > MAX_LOW_RATE_BACKLOG_P99_MESSAGES
+    {
+        return Err(warning("paced_gate::backlog"));
+    }
+    Ok(())
 }
 
 fn write_csv_result(stream: &mut StdoutLock<'_>, result: &BenchmarkResult) -> Result<(), Warning> {
@@ -169,6 +219,7 @@ fn run_topology(
     };
     let startup_latency_ns = monotonic_time_ns()?.saturating_sub(startup_started_at);
     let messages_per_publisher = messages_per_publisher_for_payload(options, payload_size);
+    validate_configured_workload(options, topology, payload_size)?;
     let depth = depth_for(payload_size, messages_per_publisher);
     let scenario_context = ScenarioContext {
         topology,
@@ -177,6 +228,10 @@ fn run_topology(
         payload_size,
         depth,
         messages_per_publisher,
+        load_mode: options.load_mode,
+        rate_hz: options.rate_hz,
+        duration_ms: options.duration_ms,
+        pace_spin_tail_us: options.pace_spin_tail_us,
         domain: &domain,
         topic: &topic,
         response_topic: &response_topic,
@@ -190,6 +245,27 @@ fn run_topology(
     };
     remove_ready_directory(&ready_directory)?;
     Ok(result)
+}
+
+fn validate_configured_workload(
+    options: &SuiteOptions,
+    topology: Topology,
+    payload_size: usize,
+) -> Result<(), Warning> {
+    if options.load_mode == LoadMode::Saturated {
+        return Ok(());
+    }
+    let rate_hz = options.rate_hz.ok_or_else(|| warning("paced_rate_hz"))?;
+    let actual_write_gib_per_second =
+        f64::from(topology.publisher_count) * rate_hz * payload_size as f64 / BYTES_PER_GIB;
+    let effective_delivery_gib_per_second =
+        actual_write_gib_per_second * f64::from(topology.subscriber_count);
+    if actual_write_gib_per_second > MAX_CONFIGURED_ACTUAL_WRITE_GIB_PER_SECOND
+        || effective_delivery_gib_per_second > MAX_CONFIGURED_EFFECTIVE_DELIVERY_GIB_PER_SECOND
+    {
+        return Err(warning("paced_workload_safety_cap"));
+    }
+    Ok(())
 }
 
 fn run_one_way(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning> {
@@ -268,11 +344,19 @@ fn aggregate_result(
     let mut transport_latency_samples = Vec::new();
     let mut end_to_end_latency_samples = Vec::new();
     let mut round_trip_samples = round_trip_samples;
+    let mut publish_lateness_samples = Vec::new();
+    let mut inter_publish_gap_samples = Vec::new();
+    let mut inter_receive_gap_samples = Vec::new();
+    let mut ring_backlog_samples = Vec::new();
     let mut reports = Vec::new();
     for output in outputs {
         transport_latency_samples.extend(output.transport_latencies);
         end_to_end_latency_samples.extend(output.end_to_end_latencies);
         round_trip_samples.extend(output.round_trip_latencies);
+        publish_lateness_samples.extend(output.publish_lateness);
+        inter_publish_gap_samples.extend(output.inter_publish_gaps);
+        inter_receive_gap_samples.extend(output.inter_receive_gaps);
+        ring_backlog_samples.extend(output.ring_backlog_messages);
         reports.push(
             output
                 .report
@@ -303,13 +387,21 @@ fn aggregate_result(
             payload_size: context.payload_size,
             publisher_count: context.topology.publisher_count,
             subscriber_count: context.topology.subscriber_count,
+            load_mode: context.load_mode,
+            rate_hz: context.rate_hz.unwrap_or(0.0),
+            rate_scope: crate::load_mode::RateScope::PerPublisher,
+            duration_ms: context.duration_ms.unwrap_or(0),
+            configured_messages_per_publisher: context.messages_per_publisher,
+            actual_messages_per_publisher: context.messages_per_publisher,
             measured_messages: measured_messages(
                 context.topology.kind,
                 context.topology.publisher_count,
                 context.topology.subscriber_count,
                 context.messages_per_publisher,
             ),
-            measured_window_ns: aggregate.duration_ns,
+            unique_published_messages: u64::from(context.topology.publisher_count)
+                * u64::from(context.messages_per_publisher),
+            measured_window_ns: measured_window_ns(context, aggregate.duration_ns),
             orchestration_wall_time_ns: wall_time_ns,
             allocation_count: aggregate.allocations,
             cpu_time_ns: aggregate.cpu_time_ns,
@@ -320,13 +412,31 @@ fn aggregate_result(
             warning_count: aggregate.warnings,
             skipped_messages: aggregate.skipped_messages,
             backpressure_pinned_slot: aggregate.backpressure_pinned_slot,
+            publish_deadline_miss_count: aggregate.publish_deadline_miss_count,
+            backlog_metric_available: context.transport.is_rbus(),
             startup_latency_ns: context.startup_latency_ns,
             attach_latency_ns,
         },
-        &mut transport_latency_samples,
-        &mut end_to_end_latency_samples,
-        &mut round_trip_samples,
+        BenchmarkSampleSets {
+            transport_latency_samples: &mut transport_latency_samples,
+            end_to_end_latency_samples: &mut end_to_end_latency_samples,
+            round_trip_samples: &mut round_trip_samples,
+            publish_lateness_samples: &mut publish_lateness_samples,
+            inter_publish_gap_samples: &mut inter_publish_gap_samples,
+            inter_receive_gap_samples: &mut inter_receive_gap_samples,
+            ring_backlog_samples: &mut ring_backlog_samples,
+        },
     ))
+}
+
+fn measured_window_ns(context: ScenarioContext<'_>, worker_duration_ns: u64) -> u64 {
+    match context.load_mode {
+        LoadMode::Saturated => worker_duration_ns,
+        LoadMode::Paced => context
+            .duration_ms
+            .unwrap_or(0)
+            .saturating_mul(NANOS_PER_MILLISECOND),
+    }
 }
 
 fn worker_arguments(
@@ -357,11 +467,21 @@ fn worker_arguments(
         context.topology.subscriber_count.to_string(),
         String::from("--messages"),
         context.messages_per_publisher.to_string(),
+        String::from("--load-mode"),
+        context.load_mode.as_str().to_owned(),
         String::from("--wait-mode"),
         context.wait_mode.as_str().to_owned(),
         String::from("--transport"),
         context.transport.as_str().to_owned(),
     ];
+    if let Some(rate_hz) = context.rate_hz {
+        arguments.push(String::from("--rate-hz"));
+        arguments.push(format!("{rate_hz:.9}"));
+    }
+    if context.pace_spin_tail_us != 0 {
+        arguments.push(String::from("--pace-spin-tail-us"));
+        arguments.push(context.pace_spin_tail_us.to_string());
+    }
     if context.topology.kind == ScenarioKind::SlowSubscriber && role == WorkerRole::Subscriber {
         arguments.push(String::from("--slow-subscriber"));
     }
@@ -384,159 +504,6 @@ fn worker_arguments(
     arguments
 }
 
-fn spawn_worker(arguments: Vec<String>) -> Result<Child, Warning> {
-    Command::new(current_executable()?)
-        .args(arguments)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .map_err(|error| warning_from_io(error, "spawn_worker"))
-}
-
-fn wait_for_worker(mut child: Child, allow_failure: bool) -> Result<Output, Warning> {
-    let stdout_reader = child.stdout.take().map(spawn_pipe_reader);
-    let stderr_reader = child.stderr.take().map(spawn_pipe_reader);
-    let started_at = monotonic_time_ns()?;
-    let status = loop {
-        if let Some(status) = child
-            .try_wait()
-            .map_err(|error| warning_from_io(error, "wait_for_worker::try_wait"))?
-        {
-            break status;
-        }
-        if monotonic_time_ns()?.saturating_sub(started_at)
-            > Duration::from_millis(WORKER_TIMEOUT_MS).as_nanos() as u64
-        {
-            child
-                .kill()
-                .map_err(|error| warning_from_io(error, "wait_for_worker::kill"))?;
-            child
-                .wait()
-                .map_err(|error| warning_from_io(error, "wait_for_worker::wait_after_kill"))?;
-            let _stdout = join_pipe_reader(stdout_reader, "wait_for_worker::stdout_after_kill")?;
-            let _stderr = join_pipe_reader(stderr_reader, "wait_for_worker::stderr_after_kill")?;
-            return Err(warning("wait_for_worker::timeout"));
-        }
-        std::thread::sleep(Duration::from_millis(WORKER_WAIT_POLL_INTERVAL_MS));
-    };
-    let stdout = join_pipe_reader(stdout_reader, "wait_for_worker::stdout")?;
-    let stderr = join_pipe_reader(stderr_reader, "wait_for_worker::stderr")?;
-    let output = Output {
-        status,
-        stdout,
-        stderr,
-    };
-    if !output.status.success() && !allow_failure {
-        print_child_stderr(&output);
-        return Err(warning("wait_for_worker::status"));
-    }
-    if output.status.success() && allow_failure {
-        return Err(warning("wait_for_worker::expected_crash"));
-    }
-    Ok(output)
-}
-
-fn spawn_pipe_reader<Pipe>(mut pipe: Pipe) -> JoinHandle<Result<Vec<u8>, std::io::Error>>
-where
-    Pipe: Read + Send + 'static,
-{
-    std::thread::spawn(move || {
-        let mut output = Vec::new();
-        pipe.read_to_end(&mut output)?;
-        Ok(output)
-    })
-}
-
-fn join_pipe_reader(
-    reader: Option<JoinHandle<Result<Vec<u8>, std::io::Error>>>,
-    operation: &'static str,
-) -> Result<Vec<u8>, Warning> {
-    match reader {
-        Some(reader) => reader
-            .join()
-            .map_err(|_| warning(operation))?
-            .map_err(|error| warning_from_io(error, operation)),
-        None => Ok(Vec::new()),
-    }
-}
-
-fn parse_worker_output(output: Output) -> Result<ParsedWorkerOutput, Warning> {
-    if !output.stderr.is_empty() {
-        print_child_stderr(&output);
-    }
-    let stdout = String::from_utf8(output.stdout)
-        .map_err(|_| warning("parse_worker_output::stdout_utf8"))?;
-    let mut parsed = ParsedWorkerOutput {
-        report: None,
-        transport_latencies: Vec::new(),
-        end_to_end_latencies: Vec::new(),
-        round_trip_latencies: Vec::new(),
-    };
-    for line in stdout.lines() {
-        if let Some(value) = line.strip_prefix(TRANSPORT_LATENCY_PREFIX) {
-            parsed
-                .transport_latencies
-                .push(value.parse::<u64>().map_err(|_| warning("parse_latency"))?);
-        } else if let Some(value) = line.strip_prefix(END_TO_END_LATENCY_PREFIX) {
-            parsed
-                .end_to_end_latencies
-                .push(value.parse::<u64>().map_err(|_| warning("parse_latency"))?);
-        } else if let Some(value) = line.strip_prefix(ROUND_TRIP_PREFIX) {
-            parsed
-                .round_trip_latencies
-                .push(value.parse::<u64>().map_err(|_| warning("parse_latency"))?);
-        } else if let Some(value) = line.strip_prefix(RESULT_PREFIX) {
-            parsed.report = Some(parse_worker_report(value)?);
-        }
-    }
-    Ok(parsed)
-}
-
-fn parse_worker_report(line: &str) -> Result<WorkerReport, Warning> {
-    let mut report = WorkerReport::default();
-    let mut field_count = 0_usize;
-    for field in line.split_whitespace() {
-        field_count = field_count.saturating_add(1);
-        let (key, value) = field
-            .split_once('=')
-            .ok_or_else(|| warning("parse_worker_report::field"))?;
-        match key {
-            "role" => {}
-            "messages" => report.messages = parse_report_value(value)?,
-            "duration_ns" => report.duration_ns = parse_report_value(value)?,
-            "allocations" => report.allocations = parse_report_value(value)?,
-            "cpu_time_ns" => report.cpu_time_ns = parse_report_value(value)?,
-            "context_switches" => report.context_switches = parse_report_value(value)?,
-            "rss_bytes" => report.rss_bytes = parse_report_value(value)?,
-            "pss_bytes" => report.pss_bytes = parse_report_value(value)?,
-            "warnings" => report.warnings = parse_report_value(value)?,
-            "skipped_messages" => report.skipped_messages = parse_report_value(value)?,
-            "backpressure_pinned_slot" => {
-                report.backpressure_pinned_slot = parse_report_value(value)?;
-            }
-            _ => return Err(warning("parse_worker_report::key")),
-        }
-    }
-    if field_count != WORKER_REPORT_FIELD_COUNT {
-        return Err(warning("parse_worker_report::missing"));
-    }
-    Ok(report)
-}
-
-fn parse_report_value(value: &str) -> Result<u64, Warning> {
-    value
-        .parse::<u64>()
-        .map_err(|_| warning("parse_worker_report::value"))
-}
-
-fn wait_worker_ready_files(paths: &[PathBuf], workers: &mut Vec<Child>) -> Result<(), Warning> {
-    if let Some(worker) = wait_paths_or_worker_exit(paths, workers)? {
-        let _output = wait_for_worker(worker, false)?;
-        return Err(warning("wait_ready_files::worker_exit"));
-    }
-    Ok(())
-}
-
 fn aggregate_worker_reports(reports: &[WorkerReport]) -> WorkerReport {
     let mut aggregate = WorkerReport::default();
     for report in reports {
@@ -556,18 +523,11 @@ fn aggregate_worker_reports(reports: &[WorkerReport]) -> WorkerReport {
         aggregate.backpressure_pinned_slot = aggregate
             .backpressure_pinned_slot
             .saturating_add(report.backpressure_pinned_slot);
+        aggregate.publish_deadline_miss_count = aggregate
+            .publish_deadline_miss_count
+            .saturating_add(report.publish_deadline_miss_count);
     }
     aggregate
-}
-
-fn current_executable() -> Result<PathBuf, Warning> {
-    std::env::current_exe().map_err(|error| warning_from_io(error, "current_executable"))
-}
-
-fn print_child_stderr(output: &Output) {
-    if !output.stderr.is_empty() {
-        eprintln!("{}", String::from_utf8_lossy(&output.stderr));
-    }
 }
 
 fn warning(operation: &'static str) -> Warning {
@@ -590,6 +550,10 @@ struct ScenarioContext<'a> {
     payload_size: usize,
     depth: usize,
     messages_per_publisher: u32,
+    load_mode: crate::load_mode::LoadMode,
+    rate_hz: Option<f64>,
+    duration_ms: Option<u64>,
+    pace_spin_tail_us: u64,
     domain: &'a str,
     topic: &'a str,
     response_topic: &'a str,

@@ -6,12 +6,15 @@ use std::time::Duration;
 use rbus_core::warning::{Warning, WarningCode};
 
 use crate::allocation;
+use crate::load_mode::LoadMode;
+use crate::pace::{PaceSchedule, spin_tail_ns_from_us, wait_until};
 use crate::system_metrics::{ProcessSystemSnapshot, monotonic_time_ns};
 use crate::timestamp_payload::{PayloadTimestamps, decode_timestamps, encode_timestamps};
 use crate::transport_kind::TransportKind;
 use crate::transports::baseline_paths::{remove_path, stream_path};
 use crate::worker::{
-    END_TO_END_LATENCY_PREFIX, ROUND_TRIP_PREFIX, TRANSPORT_LATENCY_PREFIX, WorkerArguments,
+    END_TO_END_LATENCY_PREFIX, INTER_PUBLISH_GAP_PREFIX, INTER_RECEIVE_GAP_PREFIX,
+    PUBLISH_LATENESS_PREFIX, ROUND_TRIP_PREFIX, TRANSPORT_LATENCY_PREFIX, WorkerArguments,
     WorkerReport, WorkerRole, warmup_messages_per_publisher,
 };
 
@@ -20,6 +23,8 @@ const BASELINE_READY_BYTES: &[u8] = b"ready\n";
 const CONNECT_RETRY_ATTEMPTS: usize = 2_000;
 const CONNECT_RETRY_INTERVAL_MS: u64 = 1;
 const FILL_BYTE: u8 = 0xA5;
+const PACED_DRAIN_TIMEOUT_MS: u64 = 5_000;
+const PACING_PREWARM_SLEEP_NS: u64 = 1;
 const SLOW_SUBSCRIBER_DELAY_MICROS: u64 = 100;
 const START_WAIT_POLL_INTERVAL_MS: u64 = 1;
 const START_WAIT_TIMEOUT_MS: u64 = 300_000;
@@ -47,14 +52,20 @@ fn run_publisher(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> {
     for _message_index in 0..warmup_messages_per_publisher(arguments) {
         send_payload(arguments, &mut sender, &mut payload, true)?;
     }
+    if arguments.load_mode == LoadMode::Paced {
+        prewarm_pacing_driver();
+    }
     write_ready_file(arguments)?;
-    wait_start_file(arguments)?;
-    measure_report(u64::from(arguments.messages_per_publisher), || {
-        for _message_index in 0..arguments.messages_per_publisher {
-            send_payload(arguments, &mut sender, &mut payload, false)?;
-        }
-        Ok(())
-    })
+    let start_ns = wait_start_file(arguments)?;
+    match arguments.load_mode {
+        LoadMode::Saturated => measure_report(u64::from(arguments.messages_per_publisher), || {
+            for _message_index in 0..arguments.messages_per_publisher {
+                send_payload(arguments, &mut sender, &mut payload, false)?;
+            }
+            Ok(())
+        }),
+        LoadMode::Paced => run_paced_publisher(arguments, &mut sender, &mut payload, start_ns),
+    }
 }
 
 fn run_subscriber(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> {
@@ -70,18 +81,31 @@ fn run_subscriber(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> 
         receiver.receive(&mut payload)?;
     }
     write_ready_file(arguments)?;
-    wait_start_file(arguments)?;
+    let start_ns = wait_start_file(arguments)?;
+    if arguments.load_mode == LoadMode::Paced {
+        receiver.set_read_timeout(Duration::from_millis(PACED_DRAIN_TIMEOUT_MS))?;
+    }
     let measured_messages =
         u64::from(arguments.publisher_count) * u64::from(arguments.messages_per_publisher);
     let mut transport_latencies = vec![0_u64; usize_from_u64(measured_messages)?];
     let mut end_to_end_latencies = vec![0_u64; usize_from_u64(measured_messages)?];
+    let mut inter_receive_gaps = Vec::with_capacity(transport_latencies.len().saturating_sub(1));
+    let drain_deadline_ns = paced_drain_deadline_ns(arguments, start_ns)?;
+    let mut previous_receive_ns = None;
     let report = measure_report(measured_messages, || {
         for (transport_latency, end_to_end_latency) in transport_latencies
             .iter_mut()
             .zip(end_to_end_latencies.iter_mut())
         {
-            receiver.receive(&mut payload)?;
+            match arguments.load_mode {
+                LoadMode::Saturated => receiver.receive(&mut payload)?,
+                LoadMode::Paced => receiver.receive_until(&mut payload, drain_deadline_ns)?,
+            }
             let received_at = monotonic_time_ns()?;
+            if let Some(previous_receive_ns) = previous_receive_ns {
+                inter_receive_gaps.push(received_at.saturating_sub(previous_receive_ns));
+            }
+            previous_receive_ns = Some(received_at);
             let timestamps = decode_timestamps(&payload)?;
             *transport_latency = received_at.saturating_sub(timestamps.transport_ns);
             *end_to_end_latency = received_at.saturating_sub(timestamps.end_to_end_ns);
@@ -92,6 +116,45 @@ fn run_subscriber(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> 
         Ok(())
     })?;
     print_one_way_latencies(transport_latencies, end_to_end_latencies);
+    print_prefixed_samples(INTER_RECEIVE_GAP_PREFIX, inter_receive_gaps);
+    Ok(report)
+}
+
+fn run_paced_publisher(
+    arguments: &WorkerArguments,
+    sender: &mut BaselineSender,
+    payload: &mut [u8],
+    start_ns: u64,
+) -> Result<WorkerReport, Warning> {
+    let rate_hz = arguments.rate_hz.ok_or_else(invalid_argument)?;
+    let schedule = PaceSchedule::new(start_ns, rate_hz);
+    let spin_tail_ns = spin_tail_ns_from_us(arguments.pace_spin_tail_us)?;
+    let miss_threshold_ns = schedule.period_ns()?;
+    let sample_capacity = arguments.messages_per_publisher as usize;
+    let mut publish_lateness = Vec::with_capacity(sample_capacity);
+    let mut inter_publish_gaps = Vec::with_capacity(sample_capacity.saturating_sub(1));
+    let mut publish_deadline_miss_count = 0_u64;
+    let mut previous_publish_ns = None;
+    let mut report = measure_report(u64::from(arguments.messages_per_publisher), || {
+        for message_index in 0..arguments.messages_per_publisher {
+            let deadline_ns = schedule.deadline_ns(message_index)?;
+            let lateness_ns = wait_until(deadline_ns, spin_tail_ns)?;
+            if lateness_ns > miss_threshold_ns {
+                publish_deadline_miss_count = publish_deadline_miss_count.saturating_add(1);
+            }
+            publish_lateness.push(lateness_ns);
+            send_payload(arguments, sender, payload, false)?;
+            let published_at_ns = monotonic_time_ns()?;
+            if let Some(previous_publish_ns) = previous_publish_ns {
+                inter_publish_gaps.push(published_at_ns.saturating_sub(previous_publish_ns));
+            }
+            previous_publish_ns = Some(published_at_ns);
+        }
+        Ok(())
+    })?;
+    report.publish_deadline_miss_count = publish_deadline_miss_count;
+    print_prefixed_samples(PUBLISH_LATENESS_PREFIX, publish_lateness);
+    print_prefixed_samples(INTER_PUBLISH_GAP_PREFIX, inter_publish_gaps);
     Ok(report)
 }
 
@@ -183,6 +246,7 @@ fn measure_report(
         warnings: 0,
         skipped_messages: 0,
         backpressure_pinned_slot: 0,
+        publish_deadline_miss_count: 0,
     })
 }
 
@@ -221,6 +285,26 @@ impl BaselineReceiver {
             .read_exact(payload)
             .map_err(warning_from_io)?;
         self.next_stream_index = (self.next_stream_index + 1) % self.streams.len();
+        Ok(())
+    }
+
+    fn receive_until(&mut self, payload: &mut [u8], deadline_ns: u64) -> Result<(), Warning> {
+        if monotonic_time_ns()? > deadline_ns {
+            return Err(Warning::new(
+                WarningCode::Timeout,
+                COMPONENT_RBUS_BENCH,
+                "baseline_receive_drain",
+            ));
+        }
+        self.receive(payload)
+    }
+
+    fn set_read_timeout(&self, timeout: Duration) -> Result<(), Warning> {
+        for stream in &self.streams {
+            stream
+                .set_read_timeout(Some(timeout))
+                .map_err(warning_from_io)?;
+        }
         Ok(())
     }
 }
@@ -335,11 +419,13 @@ fn retry_connect<Connection>(
 }
 
 fn print_one_way_latencies(transport_latencies: Vec<u64>, end_to_end_latencies: Vec<u64>) {
-    for latency in transport_latencies {
-        println!("{TRANSPORT_LATENCY_PREFIX}{latency}");
-    }
-    for latency in end_to_end_latencies {
-        println!("{END_TO_END_LATENCY_PREFIX}{latency}");
+    print_prefixed_samples(TRANSPORT_LATENCY_PREFIX, transport_latencies);
+    print_prefixed_samples(END_TO_END_LATENCY_PREFIX, end_to_end_latencies);
+}
+
+fn print_prefixed_samples(prefix: &str, samples: Vec<u64>) {
+    for sample in samples {
+        println!("{prefix}{sample}");
     }
 }
 
@@ -357,8 +443,18 @@ fn write_attach_ready_file(arguments: &WorkerArguments) -> Result<(), Warning> {
     }
 }
 
-fn wait_start_file(arguments: &WorkerArguments) -> Result<(), Warning> {
-    wait_flag_file(&arguments.start_file)
+fn wait_start_file(arguments: &WorkerArguments) -> Result<u64, Warning> {
+    let Some(path) = &arguments.start_file else {
+        return monotonic_time_ns();
+    };
+    wait_flag_file(&arguments.start_file)?;
+    let contents = std::fs::read_to_string(path).map_err(warning_from_io)?;
+    let start_ns = contents
+        .trim()
+        .parse::<u64>()
+        .map_err(|_| invalid_argument())?;
+    let _lateness_ns = wait_until(start_ns, 0)?;
+    Ok(start_ns)
 }
 
 fn wait_warmup_start_file(arguments: &WorkerArguments) -> Result<(), Warning> {
@@ -385,6 +481,26 @@ fn wait_flag_file(path: &Option<std::path::PathBuf>) -> Result<(), Warning> {
 
 fn usize_from_u64(value: u64) -> Result<usize, Warning> {
     usize::try_from(value).map_err(|_| invalid_argument())
+}
+
+fn paced_drain_deadline_ns(arguments: &WorkerArguments, start_ns: u64) -> Result<u64, Warning> {
+    if arguments.load_mode == LoadMode::Saturated {
+        return Ok(u64::MAX);
+    }
+    let rate_hz = arguments.rate_hz.ok_or_else(invalid_argument)?;
+    let schedule = PaceSchedule::new(start_ns, rate_hz);
+    let last_message_index = arguments.messages_per_publisher.saturating_sub(1);
+    schedule
+        .deadline_ns(last_message_index)?
+        .checked_add(schedule.period_ns()?)
+        .and_then(|deadline| {
+            deadline.checked_add(Duration::from_millis(PACED_DRAIN_TIMEOUT_MS).as_nanos() as u64)
+        })
+        .ok_or_else(invalid_argument)
+}
+
+fn prewarm_pacing_driver() {
+    std::thread::sleep(Duration::from_nanos(PACING_PREWARM_SLEEP_NS));
 }
 
 fn warning_from_io(error: std::io::Error) -> Warning {

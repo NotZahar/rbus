@@ -3,6 +3,7 @@ use std::process::ExitCode;
 use crate::args::{BenchArguments, BenchMode};
 use crate::blocking_wait::blocking_wait_wake_latency_ns;
 use crate::hot_path_syscall::run_probe;
+use crate::load_mode::LoadMode;
 use crate::metrics::MetricsSnapshot;
 use crate::output_format::OutputFormat;
 use crate::payload::PAYLOAD_SIZES;
@@ -21,7 +22,7 @@ const WARNING_EXIT_CODE: u8 = 2;
 pub fn run(arguments: BenchArguments) -> ExitCode {
     match arguments.mode {
         BenchMode::Help => ExitCode::SUCCESS,
-        BenchMode::Smoke => run_smoke(),
+        BenchMode::Smoke(options) => run_smoke(&options),
         BenchMode::Suite(options) => match options.output_format {
             OutputFormat::Csv => match run_suite_csv_stream(&options) {
                 Ok(()) => ExitCode::SUCCESS,
@@ -53,7 +54,16 @@ pub fn run(arguments: BenchArguments) -> ExitCode {
     }
 }
 
-fn run_smoke() -> ExitCode {
+fn run_smoke(options: &crate::args::SuiteOptions) -> ExitCode {
+    if options.load_mode == LoadMode::Paced {
+        return match run_suite(options) {
+            Ok(report) => {
+                print_suite_report(&report, options.output_format);
+                ExitCode::SUCCESS
+            }
+            Err(warning) => warning_exit(warning),
+        };
+    }
     let topology = TOPOLOGIES[0];
     let metrics = match blocking_wait_wake_latency_ns() {
         Ok(blocking_wait_wake_latency_ns) => MetricsSnapshot {

@@ -119,3 +119,20 @@ window после общего start flag. Parent wall-clock сохраняет�
 `end_to_end_latency_*_ns` с timestamp перед генерацией payload. Перед measured
 window publisher pre-fault/pre-touch-ит все slots ring-а минимум `depth`
 warmup-сообщениями.
+
+Для latency-sensitive sensor/camera-like workload используется отдельный
+`rbus-bench --load-mode paced --rate-hz 30 --duration-ms ...`. Этот режим не
+измеряет maximum throughput: publisher-ы работают по абсолютному расписанию
+30 Hz на publisher, а throughput поля показывают, выдержана ли заданная частота.
+Latency в paced mode интерпретируется вместе с backlog:
+`ring_backlog_p99_messages <= 1` для 1P1S означает, что p50/p99 transport
+latency почти не содержит queueing component.
+
+Paced mode не ослабляет hot-path требования. Для rbus + `busy-poll`
+`syscalls_per_message` остаётся 0, а для `rbus-loaned-metadata-only` и
+`rbus-loaned-fill` `allocations_per_message` остаётся 0 после setup/warmup.
+Sleep/spin, используемые pacing driver-ом до deadline, не входят в data-plane
+syscall budget. `actual_payload_write_gib_per_second` считает уникальную запись
+payload publisher-ами, а `effective_payload_delivery_gib_per_second` считает
+fan-out доставку subscriber-ам; для metadata-only это logical/effective метрика,
+не физическая пропускная способность памяти.

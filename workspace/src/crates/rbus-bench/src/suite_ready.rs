@@ -4,9 +4,12 @@ use std::time::Duration;
 
 use rbus_core::warning::{Warning, WarningCode};
 
+use crate::system_metrics::monotonic_time_ns;
+
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
 const READY_WAIT_ATTEMPTS: usize = 300_000;
 const READY_WAIT_POLL_INTERVAL_MS: u64 = 1;
+const START_DELAY_NS: u64 = 20_000_000;
 
 pub(crate) fn ready_directory(run_index: usize) -> PathBuf {
     std::env::temp_dir().join(format!("rbus-bench-{}-{run_index}", std::process::id()))
@@ -29,7 +32,10 @@ pub(crate) fn warmup_start_file(directory: &Path) -> PathBuf {
 }
 
 pub(crate) fn write_start_file(directory: &Path) -> Result<(), Warning> {
-    std::fs::write(start_file(directory), b"start\n")
+    let start_ns = monotonic_time_ns()?
+        .checked_add(START_DELAY_NS)
+        .ok_or_else(|| warning("start_file::overflow"))?;
+    std::fs::write(start_file(directory), format!("{start_ns}\n"))
         .map_err(|error| warning_from_io(error, "start_file::write"))
 }
 

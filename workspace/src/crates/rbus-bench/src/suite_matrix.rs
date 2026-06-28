@@ -1,38 +1,96 @@
 use crate::args::SuiteOptions;
+use crate::load_mode::LoadMode;
 use crate::payload::PAYLOAD_SIZES;
-use crate::topology::{ScenarioKind, TOPOLOGIES, Topology};
+use crate::topology::{PACED_TOPOLOGIES, ScenarioKind, TOPOLOGIES, Topology};
+use crate::transport_kind::{PACED_TRANSPORTS, SUITE_TRANSPORTS, TransportKind};
 use crate::wait_mode::{WAIT_MODES, WaitMode};
 
 const DEPTH_MINIMUM: usize = 8;
 const MAX_PAYLOAD_BYTES_PER_STREAM: usize = 512 * 1024 * 1024;
 const POWER_OF_TWO_FACTOR: usize = 2;
+const PACED_PAYLOAD_SIZES: &[usize] = &[64, 4 * 1024, 64 * 1024, 1024 * 1024, 8 * 1024 * 1024];
 
 const _: () = assert!(DEPTH_MINIMUM.is_power_of_two());
 
-pub(crate) fn selected_topologies(options: &SuiteOptions) -> &'static [Topology] {
-    if options.matrix_smoke {
-        &TOPOLOGIES[..1]
+pub(crate) fn selected_topologies(options: &SuiteOptions) -> Vec<Topology> {
+    let source = if options.load_mode == LoadMode::Paced {
+        PACED_TOPOLOGIES
     } else {
         TOPOLOGIES
-    }
+    };
+    let limit = if options.matrix_smoke {
+        1
+    } else {
+        source.len()
+    };
+    source
+        .iter()
+        .copied()
+        .filter(|topology| match options.scenario_filter.as_deref() {
+            Some(scenario) => scenario == topology.name,
+            None => true,
+        })
+        .take(limit)
+        .collect()
 }
 
-pub(crate) fn selected_payload_sizes(options: &SuiteOptions) -> &'static [usize] {
-    if options.matrix_smoke {
-        &PAYLOAD_SIZES[..1]
+pub(crate) fn selected_payload_sizes(options: &SuiteOptions) -> Vec<usize> {
+    let source = if options.load_mode == LoadMode::Paced {
+        PACED_PAYLOAD_SIZES
     } else {
         PAYLOAD_SIZES
-    }
+    };
+    let limit = if options.matrix_smoke {
+        1
+    } else {
+        source.len()
+    };
+    source
+        .iter()
+        .copied()
+        .filter(|payload_size| match options.payload_size_filter {
+            Some(filter) => filter == *payload_size,
+            None => true,
+        })
+        .take(limit)
+        .collect()
 }
 
-pub(crate) fn selected_wait_modes(_options: &SuiteOptions) -> &'static [WaitMode] {
-    &WAIT_MODES[..1]
+pub(crate) fn selected_wait_modes(options: &SuiteOptions) -> Vec<WaitMode> {
+    WAIT_MODES
+        .iter()
+        .copied()
+        .take(1)
+        .filter(|wait_mode| match options.wait_mode_filter {
+            Some(filter) => filter == *wait_mode,
+            None => true,
+        })
+        .collect()
+}
+
+pub(crate) fn selected_transports(options: &SuiteOptions) -> Vec<TransportKind> {
+    let source = if options.load_mode == LoadMode::Paced {
+        PACED_TRANSPORTS
+    } else {
+        SUITE_TRANSPORTS
+    };
+    source
+        .iter()
+        .copied()
+        .filter(|transport| match options.transport_filter {
+            Some(filter) => filter == *transport,
+            None => true,
+        })
+        .collect()
 }
 
 pub(crate) fn messages_per_publisher_for_payload(
     options: &SuiteOptions,
     payload_size: usize,
 ) -> u32 {
+    if options.load_mode == LoadMode::Paced {
+        return options.messages_per_publisher;
+    }
     let capped_messages = byte_limited_depth(payload_size).saturating_sub(1) as u32;
     options.messages_per_publisher.min(capped_messages)
 }
