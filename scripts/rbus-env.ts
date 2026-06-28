@@ -39,7 +39,7 @@ function currentUserArguments(userId, groupId) {
   return ["--user", `${userId}:${groupId}`];
 }
 
-function containerArguments(commandLine) {
+function containerArguments(commandLine, options = {}) {
   mkdirSync(resolve(mountedWorkspaceRoot, ".cache", "cargo"), { recursive: true });
   const userId = currentUserId();
   const groupId = currentGroupId();
@@ -47,6 +47,7 @@ function containerArguments(commandLine) {
   return [
     "run",
     "--rm",
+    ...(options.interactive ? ["--interactive", "--tty"] : []),
     "--userns=keep-id",
     ...currentUserArguments(userId, groupId),
     "--volume",
@@ -168,7 +169,7 @@ switch (command) {
     printToolchain();
     break;
   case "shell":
-    runCommand("podman", containerArguments("zsh -i"));
+    runCommand("podman", containerArguments("exec zsh -i", { interactive: true }));
     break;
   case "cargo":
     runCargo(commandArguments);
