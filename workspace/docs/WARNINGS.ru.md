@@ -15,7 +15,8 @@ boxing и без clippy warning `result_large_err`.
 
 На syscall boundary `rbus-ipc` возвращает `Warning`:
 
-- `SCM_RIGHTS` send/receive: `SyscallFailed`, `ResourceLimit` или `ProtocolMismatch`;
+- `SCM_RIGHTS` send/receive поверх `SOCK_SEQPACKET`: `SyscallFailed`,
+  `ResourceLimit` или `ProtocolMismatch`;
 - подключение CLI к Unix socket daemon-а: `DaemonUnavailable`;
 - framed control IO: `Disconnected`, `SyscallFailed`, `ResourceLimit` или `ProtocolMismatch`;
 - `futex` wait/wake: `SyscallFailed` или `ResourceLimit`;

@@ -16,10 +16,10 @@
 
 Дополнительные public abstractions требуют отдельного обоснования и тестов.
 
-`Bus::connect(domain)` подключается к `rbusd` через Unix domain socket
-`/run/user/<effective-uid>/rbus/<domain>.sock`. Если daemon не запущен, метод возвращает
-`WarningCode::DaemonUnavailable`; process-local registry и auto-start fallback
-отсутствуют.
+`Bus::connect(domain)` подключается к `rbusd` через Unix domain socket типа
+`SOCK_SEQPACKET` по пути `/run/user/<effective-uid>/rbus/<domain>.sock`. Если
+daemon не запущен, метод возвращает `WarningCode::DaemonUnavailable`;
+process-local registry и auto-start fallback отсутствуют.
 
 `Bus::publisher(topic, config)` регистрирует publisher в daemon-е. Daemon
 выдаёт `publisher_id`, `stream_id`, stream generation и memfd FD. Publisher
@@ -42,6 +42,8 @@ subscriber получает `WarningCode::SubscriberLimitReached`. Payload не 
 subscriber не читает историю stream-ов, которые уже существовали до его
 регистрации. Если publisher появляется после регистрации subscriber-а, первое
 сообщение этого publisher-а должно быть доступно subscriber-у.
+Пустой non-blocking `try_recv` после первичного attach не обращается к daemon-у:
+новые stream-ы добираются только когда shared `stream_epoch` изменился.
 `MessageRef::timestamp_ns()` возвращает monotonic timestamp, записанный publisher
 при commit сообщения перед release-store в `state_seq`.
 

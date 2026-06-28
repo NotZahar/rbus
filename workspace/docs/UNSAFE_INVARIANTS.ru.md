@@ -14,6 +14,10 @@ binding `LoanedMessage`/`MessageRef`.
 - `rbus-ipc::scm_rights`: `msghdr`, `iovec` и `cmsghdr` живут на время
   `sendmsg`/`recvmsg`, `MSG_CTRUNC` проверяется; тест
   `scm_rights_sends_and_receives_file_descriptor`.
+- `rbus-ipc::unix_socket`: raw `sockaddr_un` заполняется проверенным pathname
+  без NUL-байтов, FD после успешного `socket` передаётся во владение
+  `UnixListener`/`UnixStream`; control-plane тесты проходят через живой
+  `rbusd`, а seqpacket framing проверяет `scm_rights_tests`.
 - `rbus-ipc::futex`: pointer берётся из `AtomicU32` и используется только на
   время syscall; тест `futex_wake_private_returns_zero_without_waiters`.
 - `rbus-ipc::topic_wait`: `TopicWaitHeader` читается из mmap segment-а фиксированного

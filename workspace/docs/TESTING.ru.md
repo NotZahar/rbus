@@ -90,6 +90,9 @@ stale socket cleanup и проверяет, что уже attached mmap data pla
 Allocation regression покрыт `crates/rbus/tests/zero_copy_allocation_tests.rs`.
 Тестовый бинарь включает custom global allocator и доказывает 0 heap allocations
 для `loan` + `publish`, `try_recv` с сообщением и `try_recv` без сообщения.
+`empty_try_recv_after_initial_attach_does_not_use_control_plane` дополнительно
+убивает daemon после attach и проверяет, что пустой `try_recv` возвращает
+`None`, а не пытается выполнить новый control request.
 
 Syscall regression покрыт `workspace/scripts/hot-path-syscall-smoke.ts`.
 TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe publish` и
@@ -105,8 +108,9 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | HELLO client header | `crates/rbus-ipc/src/control/client.rs` | `crates/rbus-ipc/tests/control_codec_tests.rs` |
 | `memfd_create` sizing | `crates/rbus-ipc/src/memfd.rs` | `crates/rbus-ipc/tests/memfd_tests.rs` |
 | `mmap MAP_SHARED` | `crates/rbus-ipc/src/mmap.rs` | `crates/rbus-ipc/tests/mmap_tests.rs` |
-| `SCM_RIGHTS` FD passing | `crates/rbus-ipc/src/scm_rights.rs` | `crates/rbus-ipc/tests/scm_rights_tests.rs` |
+| `SCM_RIGHTS` FD passing и seqpacket framing | `crates/rbus-ipc/src/{scm_rights.rs,unix_socket.rs,control/io.rs}` | `crates/rbus-ipc/tests/scm_rights_tests.rs` |
 | `futex` wake/warning path | `crates/rbus-ipc/src/futex.rs` | `crates/rbus-ipc/tests/futex_tests.rs` |
+| Topic wait mask не пишет wake epoch без waiters | `crates/rbus-ipc/src/topic_wait.rs` | `crates/rbus-ipc/tests/topic_wait_tests.rs` |
 | WarningCode coverage catalog | `crates/rbus-core/src/warning.rs` | `every_warning_code_has_reproducible_warning_path_coverage` |
 | IPC warning paths и state checks | `crates/rbus-ipc/src/{control,futex,mmap,permissions,stream_segment}.rs` | `crates/rbus-ipc/tests/warning_path_tests.rs` |
 | Commit timestamp metadata | `crates/rbus/src/stream.rs` | `loaned_publish_makes_payload_visible_to_subscriber` |
@@ -114,6 +118,7 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | Data-plane warning counters/state | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `crates/rbus/tests/warning_path_tests.rs`, `disconnected_warning_path_increments_total_on_closed_stream` |
 | Atomic slot protocols | `crates/rbus-core/src/atomic/ordering.rs`, `crates/rbus/src/stream.rs` | `crates/rbus-core/tests/atomic_protocol_model_tests.rs` |
 | Gap handling продвигает subscriber cursor | `crates/rbus/src/{stream.rs,subscriber.rs}` | `subscriber_cursor_moves_to_oldest_available_message_after_gap_warning` |
+| Пустой `try_recv` не ходит в control plane | `crates/rbus/src/subscriber.rs` | `empty_try_recv_after_initial_attach_does_not_use_control_plane` |
 | 0 allocations в zero-copy hot path | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `zero_copy_hot_path_does_not_allocate` |
 | 0 syscalls в non-blocking hot path | `crates/rbus-bench/src/hot_path_syscall.rs` | `workspace/scripts/hot-path-syscall-smoke.ts` |
 | Multi-process benchmark suite smoke | `crates/rbus-bench/src/{suite.rs,worker.rs}` | `bench_suite_matrix_smoke_outputs_csv` |

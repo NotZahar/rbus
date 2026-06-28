@@ -37,3 +37,19 @@ fn publisher_rejects_invalid_depth() {
     };
     assert_eq!(warning.code(), WarningCode::InvalidConfig);
 }
+
+#[test]
+fn empty_try_recv_after_initial_attach_does_not_use_control_plane() {
+    let daemon = common::DaemonProcess::start("empty-try-recv-data-plane");
+    let bus = Bus::connect(&daemon.domain).expect("domain should connect");
+    let subscriber = bus
+        .subscriber("/empty/try_recv")
+        .expect("subscriber operation should succeed");
+
+    drop(daemon);
+    let message = subscriber
+        .try_recv()
+        .expect("empty try_recv should stay in data plane");
+
+    assert!(message.is_none());
+}

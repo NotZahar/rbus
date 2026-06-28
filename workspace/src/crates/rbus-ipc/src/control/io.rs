@@ -86,7 +86,6 @@ pub fn write_control_frame_with_file_descriptors(
             "write_control_frame_with_file_descriptors::header_len",
         ));
     }
-
     let frame_length = FrameHeader::ENCODED_SIZE
         .checked_add(payload.len())
         .ok_or_else(|| {
@@ -116,17 +115,62 @@ pub fn read_control_frame(
     stream: &mut UnixStream,
     max_payload_length: usize,
 ) -> Result<ControlFrame, Warning> {
-    let mut header_buffer = [0_u8; FrameHeader::ENCODED_SIZE];
-    stream
-        .read_exact(&mut header_buffer)
-        .map_err(|error| warning_from_io(error, "read_control_frame::header"))?;
-    let header = decode_frame_header(&header_buffer)?;
+    let buffer_length = FrameHeader::ENCODED_SIZE
+        .checked_add(max_payload_length)
+        .ok_or_else(|| {
+            Warning::new(
+                WarningCode::ResourceLimit,
+                COMPONENT_IPC,
+                "read_control_frame::buffer_len",
+            )
+        })?;
+    let mut frame_buffer = vec![0_u8; buffer_length];
+    let byte_count = stream
+        .read(&mut frame_buffer)
+        .map_err(|error| warning_from_io(error, "read_control_frame::frame"))?;
+    if byte_count == 0 {
+        return Err(Warning::new(
+            WarningCode::Disconnected,
+            COMPONENT_IPC,
+            "read_control_frame::eof",
+        ));
+    }
+    if byte_count < FrameHeader::ENCODED_SIZE {
+        return Err(Warning::new(
+            WarningCode::ProtocolMismatch,
+            COMPONENT_IPC,
+            "read_control_frame::short_header",
+        ));
+    }
+    let header = decode_frame_header(&frame_buffer[..FrameHeader::ENCODED_SIZE])?;
     let payload_length = header.payload_length as usize;
     if payload_length > max_payload_length {
         return Err(Warning::new(
             WarningCode::ResourceLimit,
             COMPONENT_IPC,
             "read_control_frame::payload_len",
+        ));
+    }
+    let expected_length = FrameHeader::ENCODED_SIZE
+        .checked_add(payload_length)
+        .ok_or_else(|| {
+            Warning::new(
+                WarningCode::ResourceLimit,
+                COMPONENT_IPC,
+                "read_control_frame::expected_len",
+            )
+        })?;
+    if byte_count == expected_length {
+        return Ok(ControlFrame {
+            header,
+            payload: frame_buffer[FrameHeader::ENCODED_SIZE..expected_length].to_vec(),
+        });
+    }
+    if byte_count != FrameHeader::ENCODED_SIZE {
+        return Err(Warning::new(
+            WarningCode::ProtocolMismatch,
+            COMPONENT_IPC,
+            "read_control_frame::frame_len",
         ));
     }
 

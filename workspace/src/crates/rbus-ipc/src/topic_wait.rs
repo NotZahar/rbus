@@ -70,11 +70,12 @@ impl TopicWaitSegment {
     /// Subscriber runtime metadata
     pub fn wake_waiters(&self) -> Result<(), Warning> {
         let header = self.header();
-        header.wake_epoch.fetch_add(1, Ordering::Release);
-        if header.wake_waiters_mask.load(Ordering::Acquire) != 0 {
-            let _woken_count =
-                futex_wake_shared(&header.wake_epoch, u32::from(MAX_SUBSCRIBERS_PER_STREAM))?;
+        if header.wake_waiters_mask.load(Ordering::Acquire) == 0 {
+            return Ok(());
         }
+        header.wake_epoch.fetch_add(1, Ordering::Release);
+        let _woken_count =
+            futex_wake_shared(&header.wake_epoch, u32::from(MAX_SUBSCRIBERS_PER_STREAM))?;
         Ok(())
     }
 

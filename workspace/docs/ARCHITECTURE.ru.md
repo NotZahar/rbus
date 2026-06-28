@@ -3,8 +3,8 @@
 rbus разделён на public API, control plane и data plane.
 
 Public API живёт в crate `rbus` и экспортирует только минимальный набор типов.
-Control plane обслуживается `rbusd` и бинарным Unix socket protocol. Data plane
-строится вокруг per-publisher stream и fixed-size SPMC ring.
+Control plane обслуживается `rbusd` и бинарным Unix `SOCK_SEQPACKET` protocol.
+Data plane строится вокруг per-publisher stream и fixed-size SPMC ring.
 
 Payload не передаётся через daemon. После setup/attach non-blocking publish и
 try_recv не должны делать syscalls или heap allocations в steady state.
@@ -15,7 +15,9 @@ subscriber ждёт этот futex в `recv`/`recv_timeout`. Public API не р�
 не настраивает wait strategy. В topic wait segment отдельно хранится
 `stream_epoch`: `rbusd` увеличивает его только при регистрации нового publisher
 stream-а, поэтому subscriber отличает stream-added wake от обычного message wake
-и не делает control-plane refresh в steady-state hot path.
+и не делает control-plane refresh в steady-state hot path. Если после
+первичного attach stream-ов нет, `try_recv` возвращает `None` без повторного
+control request-а до изменения `stream_epoch`.
 
 Низкоуровневые Linux primitives находятся в `rbus-ipc`: `memfd_create`,
 `ftruncate`, `mmap`, `eventfd`, `futex` и передача FD через `SCM_RIGHTS`.
@@ -55,9 +57,10 @@ sequence, `try_recv` возвращает `WarningCode::MessagesSkipped`, но �
 `try_recv` читает доступное сообщение, а не повторяет warning по уже потерянной
 sequence.
 
-`rbusd` запускает blocking accept-loop поверх Unix domain socket и создаёт
-worker thread на каждое accepted соединение. HELLO возвращает версию control
-protocol-а. One-shot CLI/diagnostic соединения закрываются после одного ответа.
+`rbusd` запускает blocking accept-loop поверх Unix domain `SOCK_SEQPACKET`
+socket-а и создаёт worker thread на каждое accepted соединение. HELLO возвращает
+версию control protocol-а. One-shot CLI/diagnostic соединения закрываются после
+одного ответа.
 Runtime REGISTER_PUBLISHER и REGISTER_SUBSCRIBER выполняются на persistent
 session: закрытие socket-а считается lifecycle-событием и приводит к очистке
 publisher stream-ов и subscriber id, принадлежащих этой session. ATTACH_STREAMS,

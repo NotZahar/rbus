@@ -128,21 +128,6 @@ impl Subscriber {
 
     /// Internal documentation
     pub fn try_recv(&self) -> Result<Option<MessageRef<'_>>, Warning> {
-        let streams_empty = {
-            let streams = self.streams.try_borrow().map_err(|_| {
-                Warning::new(
-                    WarningCode::InternalInvariantWarning,
-                    COMPONENT_RBUS,
-                    "Subscriber::try_recv::initial_borrow",
-                )
-            })?;
-            streams.is_empty()
-        };
-        if streams_empty {
-            let observed_stream_epoch = self.topic_wait.stream_epoch();
-            self.refresh_streams()?;
-            self.last_checked_stream_epoch.set(observed_stream_epoch);
-        }
         let observed_stream_epoch = self.topic_wait.stream_epoch();
         if observed_stream_epoch != self.last_checked_stream_epoch.get() {
             self.refresh_streams()?;
@@ -258,8 +243,7 @@ impl Subscriber {
         &self,
         timeout: Option<Duration>,
     ) -> Result<ReceiveWaitStatus, Warning> {
-        let streams = self.attached_stream_snapshot()?;
-        if streams.is_empty() {
+        if self.attached_stream_count()? == 0 {
             let notification = wait_stream_added(
                 &self.socket_path,
                 self.topic_hash,
@@ -273,22 +257,49 @@ impl Subscriber {
                 Ok(ReceiveWaitStatus::TimedOut)
             }
         } else {
-            wait_for_topic_wake(&self.topic_wait, self.subscriber_id, timeout)
+            self.wait_for_topic_wake(timeout)
         }
     }
 
-    fn attached_stream_snapshot(&self) -> Result<Vec<Arc<StreamInner>>, Warning> {
+    fn attached_stream_count(&self) -> Result<usize, Warning> {
         let streams = self.streams.try_borrow().map_err(|_| {
             Warning::new(
                 WarningCode::InternalInvariantWarning,
                 COMPONENT_RBUS,
-                "Subscriber::attached_stream_snapshot::borrow",
+                "Subscriber::attached_stream_count::borrow",
             )
         })?;
-        Ok(streams
-            .iter()
-            .map(|subscriber_stream| Arc::clone(&subscriber_stream.stream))
-            .collect())
+        Ok(streams.len())
+    }
+
+    fn wait_for_topic_wake(&self, timeout: Option<Duration>) -> Result<ReceiveWaitStatus, Warning> {
+        let _waiter_guard = TopicWaiterGuard::new(&self.topic_wait, self.subscriber_id)?;
+        let expected_epoch = self.topic_wait.wake_epoch();
+        if self.has_waitable_progress()? {
+            return Ok(ReceiveWaitStatus::Woken);
+        }
+        let wait_status =
+            futex_wait_shared(self.topic_wait.wake_epoch_word(), expected_epoch, timeout)?;
+        Ok(match wait_status {
+            FutexWaitStatus::TimedOut => ReceiveWaitStatus::TimedOut,
+            FutexWaitStatus::Woken | FutexWaitStatus::ValueChanged => ReceiveWaitStatus::Woken,
+        })
+    }
+
+    fn has_waitable_progress(&self) -> Result<bool, Warning> {
+        if self.topic_wait.stream_epoch() != self.last_checked_stream_epoch.get() {
+            return Ok(true);
+        }
+        let streams = self.streams.try_borrow().map_err(|_| {
+            Warning::new(
+                WarningCode::InternalInvariantWarning,
+                COMPONENT_RBUS,
+                "Subscriber::has_waitable_progress::borrow",
+            )
+        })?;
+        Ok(streams.iter().any(|subscriber_stream| {
+            subscriber_stream.stream.current_write_sequence() > subscriber_stream.cursor
+        }))
     }
 }
 
@@ -318,18 +329,4 @@ impl Drop for TopicWaiterGuard<'_> {
     fn drop(&mut self) {
         self.topic_wait.remove_waiter(self.waiter_mask);
     }
-}
-
-fn wait_for_topic_wake(
-    topic_wait: &TopicWaitSegment,
-    subscriber_id: SubscriberId,
-    timeout: Option<Duration>,
-) -> Result<ReceiveWaitStatus, Warning> {
-    let expected_epoch = topic_wait.wake_epoch();
-    let _waiter_guard = TopicWaiterGuard::new(topic_wait, subscriber_id)?;
-    let wait_status = futex_wait_shared(topic_wait.wake_epoch_word(), expected_epoch, timeout)?;
-    Ok(match wait_status {
-        FutexWaitStatus::TimedOut => ReceiveWaitStatus::TimedOut,
-        FutexWaitStatus::Woken | FutexWaitStatus::ValueChanged => ReceiveWaitStatus::Woken,
-    })
 }

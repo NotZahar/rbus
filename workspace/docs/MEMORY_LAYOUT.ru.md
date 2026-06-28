@@ -34,9 +34,10 @@ control-plane syscall; `Stats.publisher_alive` становится `false`, а
 использует отдельный topic-level wait segment размером в одну cache line:
 `TopicWaitHeader { wake_epoch: AtomicU32, stream_epoch: AtomicU32,
 wake_waiters_mask: AtomicU64, reserved }`. `wake_epoch` меняется при publish и
-stream-added wake, а `stream_epoch` только при регистрации нового publisher
-stream-а. Этот segment создаётся daemon-ом на topic, передаётся
-publisher/subscriber через `SCM_RIGHTS` и mmap-ится `MAP_SHARED`.
+stream-added wake только если `wake_waiters_mask != 0`, а `stream_epoch` только
+при регистрации нового publisher stream-а. Этот segment создаётся daemon-ом на
+topic, передаётся publisher/subscriber через `SCM_RIGHTS` и mmap-ится
+`MAP_SHARED`.
 
 Cleanup умершего subscriber-а выполняется вне hot path: `rbusd` mmap-ит
 daemon-owned FD stream-а и очищает bit этого `subscriber_id` во всех

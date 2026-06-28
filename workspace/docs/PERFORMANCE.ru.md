@@ -27,9 +27,11 @@ path вне измерения и затем проверяет три опер�
 
 Blocking `recv`/`recv_timeout` не используют polling `sleep`. Subscriber ждёт
 topic-level futex word в отдельном shared segment-е. Publisher после commit
-инкрементирует topic wake epoch и делает `FUTEX_WAKE` только если
-`wake_waiters_mask != 0`; при отсутствии blocking subscribers publish остаётся без
-wake syscall.
+читает `wake_waiters_mask`; при нулевой маске publish не пишет `wake_epoch` и не
+делает `FUTEX_WAKE`. Если blocking subscriber уже выставил waiter bit, publisher
+инкрементирует topic wake epoch и делает `FUTEX_WAKE`. Перед уходом в futex wait
+subscriber повторно проверяет `stream_epoch` и write sequence attached stream-ов,
+поэтому publish между последним `try_recv` и постановкой waiter-а не теряется.
 
 0 syscalls в non-blocking hot path доказываются TypeScript strace regression-скриптом
 `/workspace/scripts/hot-path-syscall-smoke.ts`, который запускается через:

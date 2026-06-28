@@ -43,7 +43,7 @@ systemctl --user disable --now rbusd@default.service
 systemctl --user daemon-reload
 ```
 
-Обычный запуск остаётся в foreground и bind-ит Unix socket domain-а:
+Обычный запуск остаётся в foreground и bind-ит Unix `SOCK_SEQPACKET` socket domain-а:
 `/run/user/<effective-uid>/rbus/<domain>.sock`. Каталог `/run/user/<uid>` должен
 существовать, принадлежать этому UID и иметь права `0700`; socket directory
 `/run/user/<uid>/rbus` создаётся daemon-ом с правами `0700`. Для быстрых проверок
@@ -97,8 +97,8 @@ version, `memfd` создание/seal, `mmap MAP_SHARED`, `eventfd`, private/sh
 `RLIMIT_FSIZE`, `RLIMIT_AS` и текущий warning counter. Любой failed check
 возвращается как warning и завершает команду с exit code `2`.
 
-Текущий `rbusd` принимает blocking Unix socket connections и обрабатывает один
-control frame на соединение. Runtime-команды `REGISTER_PUBLISHER`,
+Текущий `rbusd` принимает blocking Unix `SOCK_SEQPACKET` connections и
+обрабатывает control frames на соединении. Runtime-команды `REGISTER_PUBLISHER`,
 `REGISTER_SUBSCRIBER`, `ATTACH_STREAMS`, `NOTIFY_STREAM_ADDED` и `UNREGISTER`
 используются библиотекой `rbus`; диагностические команды HELLO, INSPECT,
 GET_STATS, GET_WARNINGS, CLEANUP и DOCTOR используются CLI. Payload через daemon
