@@ -4,9 +4,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use rbus_core::ids::{StreamId, SubscriberId, TopicHash};
+use rbus_core::ids::{SubscriberId, TopicHash};
 use rbus_core::ring::pin::reader_bit_mask;
-use rbus_core::sequence::Sequence;
 use rbus_core::stats::Stats;
 use rbus_core::warning::{Warning, WarningCode};
 use rbus_ipc::control::client::ControlClient;
@@ -18,7 +17,7 @@ use crate::control::{
     AttachedStream, attach_streams, notify_stream_added, reregister_subscriber, wait_stream_added,
 };
 use crate::message_ref::MessageRef;
-use crate::stream::{ReadAttempt, StreamInner};
+use crate::subscriber_streams::{SubscriberStreamRead, SubscriberStreams};
 use crate::wait::ReceiveWaitStatus;
 
 const COMPONENT_RBUS: &str = "rbus";
@@ -31,8 +30,7 @@ pub struct Subscriber {
     subscribed_generation: Cell<u64>,
     last_seen_generation: Cell<u64>,
     last_checked_stream_epoch: Cell<u32>,
-    streams: RefCell<Vec<SubscriberStream>>,
-    next_stream_index: Cell<usize>,
+    streams: SubscriberStreams,
     topic_wait: RefCell<Arc<TopicWaitSegment>>,
     topic_wait_file_descriptor: RefCell<OwnedFileDescriptor>,
     control_client: RefCell<ControlClient>,
@@ -56,8 +54,7 @@ impl Subscriber {
             subscribed_generation: Cell::new(subscribed_generation),
             last_seen_generation: Cell::new(subscribed_generation),
             last_checked_stream_epoch: Cell::new(stream_epoch),
-            streams: RefCell::new(Vec::new()),
-            next_stream_index: Cell::new(0),
+            streams: SubscriberStreams::new(),
             topic_wait: RefCell::new(topic_wait),
             topic_wait_file_descriptor: RefCell::new(topic_wait_file_descriptor),
             control_client: RefCell::new(control_client),
@@ -66,13 +63,13 @@ impl Subscriber {
 
     pub(crate) fn attach_existing_streams(&self) -> Result<(), Warning> {
         let attached_streams = attach_streams(&self.socket_path, self.topic_hash)?;
-        let max_generation = self.attach_streams_to_set(attached_streams)?;
+        let update = self.attach_streams_to_set(attached_streams)?;
         self.last_seen_generation
-            .set(max_generation.max(self.last_seen_generation.get()));
+            .set(update.max_generation.max(self.last_seen_generation.get()));
         Ok(())
     }
 
-    pub(crate) fn refresh_streams(&self) -> Result<(), Warning> {
+    pub(crate) fn refresh_streams(&self) -> Result<bool, Warning> {
         let notification = notify_stream_added(
             &self.socket_path,
             self.topic_hash,
@@ -83,119 +80,88 @@ impl Subscriber {
             Ok(notification) => notification,
             Err(warning) if is_reconnect_warning(&warning) => {
                 self.reregister_control_plane()?;
-                return Ok(());
+                return Ok(false);
             }
             Err(warning) => return Err(warning),
         };
-        self.apply_stream_notification(notification)?;
-        Ok(())
+        self.apply_stream_notification(notification)
     }
 
     fn apply_stream_notification(
         &self,
         notification: crate::control::StreamNotification,
     ) -> Result<bool, Warning> {
-        let has_streams = !notification.streams.is_empty();
-        let max_generation = self.attach_streams_to_set(notification.streams)?;
+        let update = self.attach_streams_to_set(notification.streams)?;
         self.last_seen_generation.set(
             notification
                 .latest_generation
-                .max(max_generation)
+                .max(update.max_generation)
                 .max(self.last_seen_generation.get()),
         );
-        Ok(has_streams)
+        Ok(update.has_new_stream)
     }
 
-    fn attach_streams_to_set(&self, attached_streams: Vec<AttachedStream>) -> Result<u64, Warning> {
-        let mut streams = self.streams.try_borrow_mut().map_err(|_| {
-            Warning::new(
-                WarningCode::InternalInvariantWarning,
-                COMPONENT_RBUS,
-                "Subscriber::attach_streams_to_set::borrow",
-            )
-        })?;
-        let mut max_generation = self.last_seen_generation.get();
-        for attached_stream in attached_streams {
-            if !streams.iter().any(|existing_stream| {
-                existing_stream.stream_id == attached_stream.metadata.stream_id
-            }) {
-                max_generation = max_generation.max(attached_stream.stream_generation);
-                let stream = StreamInner::attach(
-                    attached_stream.metadata,
-                    attached_stream.stream_generation,
-                    &attached_stream.file_descriptor,
-                    0,
-                )?;
-                let cursor = if stream.created_generation() > self.subscribed_generation.get() {
-                    Sequence::new(0)
-                } else {
-                    stream.current_write_sequence()
-                };
-                streams.push(SubscriberStream {
-                    stream_id: stream.stream_id(),
-                    cursor,
-                    stream,
-                });
-            }
-        }
-        Ok(max_generation)
+    fn attach_streams_to_set(
+        &self,
+        attached_streams: Vec<AttachedStream>,
+    ) -> Result<crate::subscriber_streams::AttachedStreamSetUpdate, Warning> {
+        self.streams.attach(
+            attached_streams,
+            self.subscribed_generation.get(),
+            self.last_seen_generation.get(),
+        )
     }
 
     /// Internal documentation
     pub fn try_recv(&self) -> Result<Option<MessageRef<'_>>, Warning> {
-        let observed_stream_epoch = self.topic_wait_stream_epoch()?;
-        if observed_stream_epoch != self.last_checked_stream_epoch.get() {
-            match self.refresh_streams() {
-                Ok(()) => {}
-                Err(warning)
-                    if is_reconnect_warning(&warning) && self.attached_stream_count()? > 0 => {}
-                Err(warning) => return Err(warning),
+        match self
+            .streams
+            .try_recv_single_stream(self.subscriber_id.get(), |read_reservation| {
+                MessageRef::from_reservation(self, read_reservation)
+            })? {
+            SubscriberStreamRead::Message(message) => {
+                return Ok(Some(message));
             }
-            self.last_checked_stream_epoch
-                .set(self.topic_wait_stream_epoch()?);
+            SubscriberStreamRead::Skipped(warning) => return Err(warning),
+            SubscriberStreamRead::Empty => {
+                if self.refresh_streams_if_epoch_changed()? {
+                    return self.try_recv_from_attached_streams();
+                }
+                return Ok(None);
+            }
+            SubscriberStreamRead::NotSingleStream => {}
         }
+        self.refresh_streams_if_epoch_changed()?;
         self.try_recv_from_attached_streams()
     }
 
     fn try_recv_from_attached_streams(&self) -> Result<Option<MessageRef<'_>>, Warning> {
-        let mut streams = self.streams.try_borrow_mut().map_err(|_| {
-            Warning::new(
-                WarningCode::InternalInvariantWarning,
-                COMPONENT_RBUS,
-                "Subscriber::try_recv_from_attached_streams::borrow",
-            )
-        })?;
-        if streams.is_empty() {
-            return Ok(None);
+        match self
+            .streams
+            .try_recv_round_robin(self.subscriber_id.get(), |read_reservation| {
+                MessageRef::from_reservation(self, read_reservation)
+            })? {
+            SubscriberStreamRead::Message(message) => Ok(Some(message)),
+            SubscriberStreamRead::Skipped(warning) => Err(warning),
+            SubscriberStreamRead::Empty | SubscriberStreamRead::NotSingleStream => Ok(None),
         }
+    }
 
-        let stream_count = streams.len();
-        let start_index = self.next_stream_index.get() % stream_count;
-        for offset in 0..stream_count {
-            let stream_index = (start_index + offset) % stream_count;
-            let subscriber_stream = &mut streams[stream_index];
-            match subscriber_stream
-                .stream
-                .try_read_message(subscriber_stream.cursor, self.subscriber_id.get())?
-            {
-                ReadAttempt::Empty => {}
-                ReadAttempt::Message(read_reservation) => {
-                    subscriber_stream.cursor = subscriber_stream.cursor.next();
-                    self.next_stream_index
-                        .set((stream_index + 1) % stream_count);
-                    return Ok(Some(MessageRef::from_reservation(self, read_reservation)));
-                }
-                ReadAttempt::Skipped {
-                    next_sequence,
-                    warning,
-                } => {
-                    subscriber_stream.cursor = next_sequence;
-                    self.next_stream_index.set(stream_index);
-                    return Err(warning);
-                }
-            }
+    fn refresh_streams_if_epoch_changed(&self) -> Result<bool, Warning> {
+        let observed_stream_epoch = self.topic_wait_stream_epoch()?;
+        if observed_stream_epoch == self.last_checked_stream_epoch.get() {
+            return Ok(false);
         }
-        Ok(None)
+        let has_new_stream = match self.refresh_streams() {
+            Ok(has_new_stream) => has_new_stream,
+            Err(warning) if is_reconnect_warning(&warning) && self.attached_stream_count() > 0 => {
+                false
+            }
+            Err(warning) => return Err(warning),
+        };
+        self.last_checked_stream_epoch
+            .set(self.topic_wait_stream_epoch()?);
+        Ok(has_new_stream)
     }
 
     /// Warning model metadata
@@ -233,32 +199,10 @@ impl Subscriber {
 
     /// Subscriber runtime metadata
     pub fn stats(&self) -> Stats {
-        let streams = match self.streams.try_borrow() {
-            Ok(streams) => streams,
-            Err(_) => return Stats::default(),
-        };
-        let mut stats = Stats::default();
-        for subscriber_stream in streams.iter() {
-            let stream_stats = subscriber_stream.stream.stats();
-            stats.published_messages = stats
-                .published_messages
-                .saturating_add(stream_stats.published_messages);
-            stats.received_messages = stats
-                .received_messages
-                .saturating_add(stream_stats.received_messages);
-            stats.skipped_messages = stats
-                .skipped_messages
-                .saturating_add(stream_stats.skipped_messages);
-            stats.warnings_total = stats
-                .warnings_total
-                .saturating_add(stream_stats.warnings_total);
-            stats.connected_streams = stats.connected_streams.saturating_add(1);
-            stats.disconnected_streams = stats
-                .disconnected_streams
-                .saturating_add(stream_stats.disconnected_streams);
-            stats.publisher_alive |= stream_stats.publisher_alive;
+        match self.streams.stats() {
+            Ok(stats) => stats,
+            Err(warning) => panic!("Subscriber::stats invariant warning: {warning:?}"),
         }
-        stats
     }
 
     fn wait_for_message_or_stream(
@@ -266,12 +210,11 @@ impl Subscriber {
         timeout: Option<Duration>,
     ) -> Result<ReceiveWaitStatus, Warning> {
         match self.refresh_streams() {
-            Ok(()) => {}
-            Err(warning) if is_reconnect_warning(&warning) && self.attached_stream_count()? > 0 => {
-            }
+            Ok(_) => {}
+            Err(warning) if is_reconnect_warning(&warning) && self.attached_stream_count() > 0 => {}
             Err(warning) => return Err(warning),
         }
-        if self.attached_stream_count()? == 0 {
+        if self.attached_stream_count() == 0 {
             let notification = wait_stream_added(
                 &self.socket_path,
                 self.topic_hash,
@@ -289,15 +232,8 @@ impl Subscriber {
         }
     }
 
-    fn attached_stream_count(&self) -> Result<usize, Warning> {
-        let streams = self.streams.try_borrow().map_err(|_| {
-            Warning::new(
-                WarningCode::InternalInvariantWarning,
-                COMPONENT_RBUS,
-                "Subscriber::attached_stream_count::borrow",
-            )
-        })?;
-        Ok(streams.len())
+    fn attached_stream_count(&self) -> usize {
+        self.streams.count()
     }
 
     fn wait_for_topic_wake(&self, timeout: Option<Duration>) -> Result<ReceiveWaitStatus, Warning> {
@@ -318,16 +254,7 @@ impl Subscriber {
         if self.topic_wait_stream_epoch()? != self.last_checked_stream_epoch.get() {
             return Ok(true);
         }
-        let streams = self.streams.try_borrow().map_err(|_| {
-            Warning::new(
-                WarningCode::InternalInvariantWarning,
-                COMPONENT_RBUS,
-                "Subscriber::has_waitable_progress::borrow",
-            )
-        })?;
-        Ok(streams.iter().any(|subscriber_stream| {
-            subscriber_stream.stream.current_write_sequence() > subscriber_stream.cursor
-        }))
+        self.streams.has_waitable_progress()
     }
 
     fn reregister_control_plane(&self) -> Result<(), Warning> {
@@ -407,12 +334,6 @@ impl Subscriber {
         })?;
         Ok(Arc::clone(&topic_wait))
     }
-}
-
-struct SubscriberStream {
-    stream_id: StreamId,
-    stream: Arc<StreamInner>,
-    cursor: Sequence,
 }
 
 struct TopicWaiterGuard<'a> {

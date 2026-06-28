@@ -11,6 +11,7 @@ mod sequence;
 mod stats;
 mod stream;
 mod subscriber;
+mod subscriber_streams;
 mod wait;
 mod warning;
 

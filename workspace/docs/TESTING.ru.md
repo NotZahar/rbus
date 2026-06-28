@@ -116,10 +116,16 @@ Reader pin/claim regression покрыт unit tests в `crates/rbus/src/stream/t
 `empty_try_recv_after_initial_attach_does_not_use_control_plane` дополнительно
 убивает daemon после attach и проверяет, что пустой `try_recv` возвращает
 `None`, а не пытается выполнить новый control request.
+`single_stream_fast_path_refreshes_new_stream_after_empty_read` проверяет, что
+single-stream fast path не пропускает второй publisher stream: после пустого
+чтения первого stream-а новый stream attach-ится по `stream_epoch`, и сообщение
+второго publisher-а доступно в том же `try_recv`.
 Typestate regression для loan guard закреплён compile-fail doctest-ом в
 `crates/rbus/src/loaned.rs`: второй outstanding loan на том же `Publisher` не
 компилируется, потому что `LoanedMessage` удерживает `&mut Publisher` до
-`publish` или `Drop`.
+`publish` или `Drop`. Отдельный compile-fail doctest фиксирует, что
+`Publisher::publish(LoanedMessage)` отсутствует и loan нельзя передать чужому
+publisher-у.
 
 Syscall regression покрыт `workspace/scripts/hot-path-syscall-smoke.ts`.
 TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe publish` и
@@ -149,6 +155,7 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | Atomic slot protocols | `crates/rbus-core/src/atomic/ordering.rs`, `crates/rbus/src/stream.rs` | `crates/rbus-core/tests/atomic_protocol_model_tests.rs` |
 | Gap handling продвигает subscriber cursor | `crates/rbus/src/{stream.rs,subscriber.rs}` | `subscriber_cursor_moves_to_oldest_available_message_after_gap_warning` |
 | Пустой `try_recv` не ходит в control plane | `crates/rbus/src/subscriber.rs` | `empty_try_recv_after_initial_attach_does_not_use_control_plane` |
+| Single-stream `try_recv` без `RefCell<Vec<_>>`/scan на message path | `crates/rbus/src/{subscriber.rs,subscriber_streams.rs}` | `single_stream_fast_path_refreshes_new_stream_after_empty_read`, `zero_copy_hot_path_does_not_allocate` |
 | 0 allocations в zero-copy hot path | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `zero_copy_hot_path_does_not_allocate` |
 | Нет per-message `Arc::clone` в loan/read reservation | `crates/rbus/src/{stream.rs,loaned.rs,message_ref.rs}` | `message_reservations_do_not_clone_stream_arc` |
 | Нет false sharing между write-heavy counters | `crates/rbus-core/src/stats.rs` | `stream_counters_do_not_share_cache_lines_between_write_heavy_fields` |

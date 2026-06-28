@@ -58,6 +58,11 @@ Reader pin оптимизирован под uncontended path: один CAS из
 multi-reader fallback остаётся только для реально занятых slot-ов. Writer claim
 после commit/rollback очищается store-ом, а `published_messages` обновляется
 single-writer store-ом без shared counter RMW.
+Для частого случая одного attached stream-а `Subscriber` держит direct pointer
+на `StreamInner` и cursor в `Cell`. Успешный `try_recv` идёт сразу в ring read,
+не проверяет `stream_epoch`, не берёт `RefCell<Vec<_>>` и не сканирует stream
+set. Если single-stream read пустой, тогда subscriber проверяет `stream_epoch`
+и attach-ит новые publisher stream-ы, чтобы multi-publisher topic не терялся.
 
 В workspace включены `warnings = "deny"` и `dead_code = "deny"`. Неиспользуемые
 placeholder-модули запрещены: модуль либо участвует в текущем срезе, либо не

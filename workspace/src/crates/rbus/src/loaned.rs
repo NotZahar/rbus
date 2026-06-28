@@ -56,6 +56,18 @@ impl<'publisher> LoanedMessage<'publisher> {
     ///     Ok(())
     /// }
     /// ```
+    ///
+    /// ```compile_fail
+    /// use rbus::{Bus, TopicConfig};
+    ///
+    /// fn cannot_publish_loan_through_another_publisher(bus: &Bus) -> rbus::RbusResult<()> {
+    ///     let mut first_publisher = bus.publisher("/typed/source", TopicConfig::new(8, 4))?;
+    ///     let mut second_publisher = bus.publisher("/typed/target", TopicConfig::new(8, 4))?;
+    ///     let message = first_publisher.loan(1)?;
+    ///     second_publisher.publish(message)?;
+    ///     Ok(())
+    /// }
+    /// ```
     pub fn publish(mut self) -> Result<Sequence, Warning> {
         let sequence = self.sequence;
         let commit_result = self

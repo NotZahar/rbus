@@ -34,6 +34,9 @@ memory и удаляет publisher stream из registry.
 `Publisher::loan` и `Publisher::publish_bytes` принимают `&mut self`.
 `LoanedMessage` удерживает mutable borrow этого `Publisher`, поэтому второй
 outstanding loan на том же publisher-е невозможен на этапе компиляции.
+Commit выполняется методом `LoanedMessage::publish`; публичного
+`Publisher::publish(LoanedMessage)` нет, поэтому loan нельзя передать чужому
+publisher-у даже до runtime-проверки.
 `Publisher` намеренно не `Sync`; параллельные producer threads должны иметь
 отдельные publisher instances.
 
@@ -53,6 +56,9 @@ subscriber не читает историю stream-ов, которые уже �
 сообщение этого publisher-а должно быть доступно subscriber-у.
 Пустой non-blocking `try_recv` после первичного attach не обращается к daemon-у:
 новые stream-ы добираются только когда shared `stream_epoch` изменился.
+Если attached ровно один stream, `try_recv` сначала читает его напрямую через
+single-stream fast path без borrow-а `Vec`, round-robin scan и проверки
+`stream_epoch`; refresh control plane выполняется только после пустого чтения.
 `MessageRef::timestamp_ns()` возвращает monotonic timestamp, записанный publisher
 при commit сообщения перед release-store в `state_seq`.
 

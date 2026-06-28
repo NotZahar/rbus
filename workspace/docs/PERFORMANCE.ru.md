@@ -8,6 +8,8 @@ Steady-state требования:
 - non-blocking publish/try_recv: 0 syscalls;
 - loan/try_recv: 0 per-message `Arc` refcount операций;
 - loan outstanding guard: compile-time mutable borrow, 0 per-loan `AtomicBool`;
+- single-stream try_recv with message: 0 `stream_epoch` check, 0 `RefCell<Vec<_>>`
+  borrow, 0 stream-set scan;
 - publisher/subscriber counters: без false sharing в одной cache line;
 - commit/rollback writer-claim clear: 0 RMW;
 - payload copies in loaned path: 0.
@@ -63,6 +65,12 @@ path вне измерения и затем проверяет три опер�
 Отсутствие per-message `Arc::clone` закреплено unit test-ом
 `message_reservations_do_not_clone_stream_arc`: тест удерживает loan/read
 reservation и проверяет, что `Arc::strong_count` stream-а не меняется.
+Single-stream fast path хранит pointer на единственный `StreamInner` и cursor в
+`Cell`; при наличии сообщения `Subscriber::try_recv` сразу выполняет ring read.
+Если чтение пустое, только тогда проверяется shared `stream_epoch`, чтобы
+подхватить новые publisher stream-ы. Regression
+`single_stream_fast_path_refreshes_new_stream_after_empty_read` фиксирует, что
+появление второго publisher-а после пустого fast-path чтения не теряется.
 Отсутствие false sharing между hot counters закреплено layout test-ом
 `stream_counters_do_not_share_cache_lines_between_write_heavy_fields`.
 Pin/claim fast path закреплён unit tests

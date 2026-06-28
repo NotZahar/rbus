@@ -55,6 +55,10 @@ daemon.
 сообщение: `LoanedMessage` удерживает mutable borrow `Publisher`, а
 `MessageRef` хранит lifetime-bound pointer на уже attached stream. Второй
 outstanding loan запрещается типами, без `AtomicBool` на hot path.
+Для topic-а с одним attached stream-ом `Subscriber::try_recv` при наличии
+сообщения идёт напрямую в ring read: без `stream_epoch` check, без
+`RefCell<Vec<_>>` borrow и без scan stream set. Если чтение пустое, subscriber
+проверяет `stream_epoch` и добирает новые publisher stream-ы.
 
 CLI-команды `list`, `stats`, `warnings`, `inspect`, `cleanup` и `doctor`
 обращаются к `rbusd`. Если daemon недоступен, команда завершается warning-ом

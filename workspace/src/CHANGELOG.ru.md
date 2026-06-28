@@ -44,3 +44,4 @@
 - Benchmark stream depth снова рассчитывается из `warmup + measured + 1`, чтобы прогрев не создавал искусственный `MessagesSkipped`.
 - Benchmark syscall pass выполняется один раз на строку matrix, а не на каждый повтор timing run.
 - `LoanedMessage` теперь commit-ит себя через `LoanedMessage::publish`; `Publisher::publish(LoanedMessage)` удалён, поэтому loan нельзя передать чужому publisher-у даже до runtime. Добавлены compile-fail doctest и regression test на rollback при `Drop`.
+- Добавлен single-stream fast path для `Subscriber::try_recv`: при одном attached stream-е успешное чтение идёт без `stream_epoch` check, `RefCell<Vec<_>>` borrow и scan; после пустого чтения refresh по `stream_epoch` сохраняет attach новых publisher stream-ов. Добавлен regression test для появления второго publisher-а после пустого fast-path чтения.
