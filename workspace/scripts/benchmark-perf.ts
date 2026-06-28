@@ -7,8 +7,8 @@ import { workspacePaths } from "./workspace-paths.ts";
 
 const defaultBaselinePath = "benches/baselines/rbus_suite_baseline_x86_64.csv";
 const defaultFormat = "json";
-const defaultMessages = "32";
-const defaultRuns = "5";
+const defaultMessages = "100000";
+const defaultRuns = "1";
 
 class ScriptError extends Error {
   readonly exitCode: number;
@@ -96,7 +96,7 @@ function runCommand(command: string, commandArguments: string[]) {
 }
 
 function runPerf(options: PerfOptions) {
-  runCommand("cargo", ["build", "-p", "rbusd", "-p", "rbus-bench"]);
+  runCommand("cargo", ["build", "--profile", "bench", "-p", "rbusd", "-p", "rbus-bench"]);
   const suiteArguments = [
     "--suite",
     "--messages",

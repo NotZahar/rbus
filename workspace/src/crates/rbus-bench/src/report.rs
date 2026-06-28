@@ -2,12 +2,15 @@ use crate::metrics::BenchmarkResult;
 
 pub(crate) const CSV_HEADER: &str = concat!(
     "status,scenario,transport,wait_mode,payload_size,publisher_count,subscriber_count,",
-    "measured_messages,latency_p50_ns,latency_p90_ns,latency_p99_ns,",
-    "latency_p999_ns,latency_p9999_ns,round_trip_p50_ns,round_trip_p90_ns,",
-    "round_trip_p99_ns,round_trip_p999_ns,throughput_messages_per_second,",
+    "measured_messages,transport_latency_p50_ns,transport_latency_p90_ns,",
+    "transport_latency_p99_ns,transport_latency_p999_ns,transport_latency_p9999_ns,",
+    "end_to_end_latency_p50_ns,end_to_end_latency_p90_ns,end_to_end_latency_p99_ns,",
+    "end_to_end_latency_p999_ns,end_to_end_latency_p9999_ns,round_trip_p50_ns,",
+    "round_trip_p90_ns,round_trip_p99_ns,round_trip_p999_ns,throughput_messages_per_second,",
     "payload_throughput_gib_per_second,cpu_utilization_per_mille,rss_bytes,pss_bytes,",
     "context_switches,syscalls_per_message,allocations_per_message,warning_count,",
-    "skipped_messages,backpressure_pinned_slot,startup_latency_ns,attach_latency_ns"
+    "skipped_messages,backpressure_pinned_slot,startup_latency_ns,attach_latency_ns,",
+    "orchestration_wall_time_ns"
 );
 
 /// Smoke benchmark report
@@ -171,13 +174,23 @@ impl SuiteReport {
     }
 }
 
+pub(crate) fn result_csv_line(status: &str, result: &BenchmarkResult) -> String {
+    let mut output = String::new();
+    push_result_csv(&mut output, status, result);
+    output
+}
+
 fn push_result_json(output: &mut String, result: &BenchmarkResult) {
     output.push_str(&format!(
         concat!(
             "{{\"scenario\":\"{}\",\"transport\":\"{}\",\"wait_mode\":\"{}\",",
             "\"payload_size\":{},\"publisher_count\":{},\"subscriber_count\":{},",
-            "\"measured_messages\":{},\"latency_p50_ns\":{},\"latency_p90_ns\":{},",
-            "\"latency_p99_ns\":{},\"latency_p999_ns\":{},\"latency_p9999_ns\":{},",
+            "\"measured_messages\":{},\"transport_latency_p50_ns\":{},",
+            "\"transport_latency_p90_ns\":{},\"transport_latency_p99_ns\":{},",
+            "\"transport_latency_p999_ns\":{},\"transport_latency_p9999_ns\":{},",
+            "\"end_to_end_latency_p50_ns\":{},\"end_to_end_latency_p90_ns\":{},",
+            "\"end_to_end_latency_p99_ns\":{},\"end_to_end_latency_p999_ns\":{},",
+            "\"end_to_end_latency_p9999_ns\":{},",
             "\"round_trip_p50_ns\":{},\"round_trip_p90_ns\":{},",
             "\"round_trip_p99_ns\":{},\"round_trip_p999_ns\":{},",
             "\"throughput_messages_per_second\":{:.6},",
@@ -186,7 +199,8 @@ fn push_result_json(output: &mut String, result: &BenchmarkResult) {
             "\"context_switches\":{},\"syscalls_per_message\":{:.6},",
             "\"allocations_per_message\":{:.6},\"warning_count\":{},",
             "\"skipped_messages\":{},\"backpressure_pinned_slot\":{},",
-            "\"startup_latency_ns\":{},\"attach_latency_ns\":{}}}"
+            "\"startup_latency_ns\":{},\"attach_latency_ns\":{},",
+            "\"orchestration_wall_time_ns\":{}}}"
         ),
         result.scenario,
         result.transport.as_str(),
@@ -195,11 +209,16 @@ fn push_result_json(output: &mut String, result: &BenchmarkResult) {
         result.publisher_count,
         result.subscriber_count,
         result.measured_messages,
-        result.latency_p50_ns,
-        result.latency_p90_ns,
-        result.latency_p99_ns,
-        result.latency_p999_ns,
-        result.latency_p9999_ns,
+        result.transport_latency_p50_ns,
+        result.transport_latency_p90_ns,
+        result.transport_latency_p99_ns,
+        result.transport_latency_p999_ns,
+        result.transport_latency_p9999_ns,
+        result.end_to_end_latency_p50_ns,
+        result.end_to_end_latency_p90_ns,
+        result.end_to_end_latency_p99_ns,
+        result.end_to_end_latency_p999_ns,
+        result.end_to_end_latency_p9999_ns,
         result.round_trip_p50_ns,
         result.round_trip_p90_ns,
         result.round_trip_p99_ns,
@@ -216,15 +235,16 @@ fn push_result_json(output: &mut String, result: &BenchmarkResult) {
         result.skipped_messages,
         result.backpressure_pinned_slot,
         result.startup_latency_ns,
-        result.attach_latency_ns
+        result.attach_latency_ns,
+        result.orchestration_wall_time_ns
     ));
 }
 
 fn push_result_csv(output: &mut String, status: &str, result: &BenchmarkResult) {
     output.push_str(&format!(
         concat!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.9},",
-            "{},{},{},{},{:.6},{:.6},{},{},{},{},{}"
+            "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{:.6},",
+            "{:.9},{},{},{},{},{:.6},{:.6},{},{},{},{},{},{}"
         ),
         status,
         result.scenario,
@@ -234,11 +254,16 @@ fn push_result_csv(output: &mut String, status: &str, result: &BenchmarkResult) 
         result.publisher_count,
         result.subscriber_count,
         result.measured_messages,
-        result.latency_p50_ns,
-        result.latency_p90_ns,
-        result.latency_p99_ns,
-        result.latency_p999_ns,
-        result.latency_p9999_ns,
+        result.transport_latency_p50_ns,
+        result.transport_latency_p90_ns,
+        result.transport_latency_p99_ns,
+        result.transport_latency_p999_ns,
+        result.transport_latency_p9999_ns,
+        result.end_to_end_latency_p50_ns,
+        result.end_to_end_latency_p90_ns,
+        result.end_to_end_latency_p99_ns,
+        result.end_to_end_latency_p999_ns,
+        result.end_to_end_latency_p9999_ns,
         result.round_trip_p50_ns,
         result.round_trip_p90_ns,
         result.round_trip_p99_ns,
@@ -255,6 +280,7 @@ fn push_result_csv(output: &mut String, status: &str, result: &BenchmarkResult) 
         result.skipped_messages,
         result.backpressure_pinned_slot,
         result.startup_latency_ns,
-        result.attach_latency_ns
+        result.attach_latency_ns,
+        result.orchestration_wall_time_ns
     ));
 }

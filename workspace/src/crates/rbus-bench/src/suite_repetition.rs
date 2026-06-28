@@ -10,11 +10,18 @@ pub(crate) fn aggregate_repeated_results(results: &mut [BenchmarkResult]) -> Ben
         publisher_count: first.publisher_count,
         subscriber_count: first.subscriber_count,
         measured_messages: results.iter().map(|result| result.measured_messages).sum(),
-        latency_p50_ns: median_u64(results, |result| result.latency_p50_ns),
-        latency_p90_ns: median_u64(results, |result| result.latency_p90_ns),
-        latency_p99_ns: median_u64(results, |result| result.latency_p99_ns),
-        latency_p999_ns: median_u64(results, |result| result.latency_p999_ns),
-        latency_p9999_ns: median_u64(results, |result| result.latency_p9999_ns),
+        transport_latency_p50_ns: median_u64(results, |result| result.transport_latency_p50_ns),
+        transport_latency_p90_ns: median_u64(results, |result| result.transport_latency_p90_ns),
+        transport_latency_p99_ns: median_u64(results, |result| result.transport_latency_p99_ns),
+        transport_latency_p999_ns: median_u64(results, |result| result.transport_latency_p999_ns),
+        transport_latency_p9999_ns: median_u64(results, |result| result.transport_latency_p9999_ns),
+        end_to_end_latency_p50_ns: median_u64(results, |result| result.end_to_end_latency_p50_ns),
+        end_to_end_latency_p90_ns: median_u64(results, |result| result.end_to_end_latency_p90_ns),
+        end_to_end_latency_p99_ns: median_u64(results, |result| result.end_to_end_latency_p99_ns),
+        end_to_end_latency_p999_ns: median_u64(results, |result| result.end_to_end_latency_p999_ns),
+        end_to_end_latency_p9999_ns: median_u64(results, |result| {
+            result.end_to_end_latency_p9999_ns
+        }),
         round_trip_p50_ns: median_u64(results, |result| result.round_trip_p50_ns),
         round_trip_p90_ns: median_u64(results, |result| result.round_trip_p90_ns),
         round_trip_p99_ns: median_u64(results, |result| result.round_trip_p99_ns),
@@ -39,6 +46,7 @@ pub(crate) fn aggregate_repeated_results(results: &mut [BenchmarkResult]) -> Ben
             .sum(),
         startup_latency_ns: median_u64(results, |result| result.startup_latency_ns),
         attach_latency_ns: median_u64(results, |result| result.attach_latency_ns),
+        orchestration_wall_time_ns: median_u64(results, |result| result.orchestration_wall_time_ns),
     }
 }
 
@@ -81,7 +89,7 @@ mod tests {
         let aggregate = aggregate_repeated_results(&mut results);
 
         assert_eq!(aggregate.measured_messages, 12);
-        assert_eq!(aggregate.latency_p99_ns, 200);
+        assert_eq!(aggregate.transport_latency_p99_ns, 200);
         assert_eq!(aggregate.throughput_messages_per_second, 20.0);
         assert_eq!(aggregate.warning_count, 7);
         assert_eq!(aggregate.skipped_messages, 9);
@@ -94,18 +102,23 @@ mod tests {
         skipped_messages: u64,
     ) -> BenchmarkResult {
         BenchmarkResult {
-            scenario: "one-publisher-one-subscriber",
-            transport: TransportKind::RbusLoaned,
+            scenario: "four-publishers-eight-subscribers",
+            transport: TransportKind::RbusLoanedMetadataOnly,
             wait_mode: WaitMode::BusyPoll,
             payload_size: 64,
             publisher_count: 1,
             subscriber_count: 1,
             measured_messages: 4,
-            latency_p50_ns: latency_p99_ns,
-            latency_p90_ns: latency_p99_ns,
-            latency_p99_ns,
-            latency_p999_ns: latency_p99_ns,
-            latency_p9999_ns: latency_p99_ns,
+            transport_latency_p50_ns: latency_p99_ns,
+            transport_latency_p90_ns: latency_p99_ns,
+            transport_latency_p99_ns: latency_p99_ns,
+            transport_latency_p999_ns: latency_p99_ns,
+            transport_latency_p9999_ns: latency_p99_ns,
+            end_to_end_latency_p50_ns: latency_p99_ns,
+            end_to_end_latency_p90_ns: latency_p99_ns,
+            end_to_end_latency_p99_ns: latency_p99_ns,
+            end_to_end_latency_p999_ns: latency_p99_ns,
+            end_to_end_latency_p9999_ns: latency_p99_ns,
             round_trip_p50_ns: 0,
             round_trip_p90_ns: 0,
             round_trip_p99_ns: 0,
@@ -123,6 +136,7 @@ mod tests {
             backpressure_pinned_slot: 0,
             startup_latency_ns: 0,
             attach_latency_ns: 0,
+            orchestration_wall_time_ns: 0,
         }
     }
 }

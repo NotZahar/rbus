@@ -38,16 +38,26 @@ pub struct BenchmarkResult {
     pub subscriber_count: u8,
     /// Internal documentation
     pub measured_messages: u64,
-    /// p50 one-way latency
-    pub latency_p50_ns: u64,
-    /// p90 one-way latency
-    pub latency_p90_ns: u64,
-    /// p99 one-way latency
-    pub latency_p99_ns: u64,
-    /// p99.9 one-way latency
-    pub latency_p999_ns: u64,
-    /// p99.99 one-way latency
-    pub latency_p9999_ns: u64,
+    /// p50 transport latency
+    pub transport_latency_p50_ns: u64,
+    /// p90 transport latency
+    pub transport_latency_p90_ns: u64,
+    /// p99 transport latency
+    pub transport_latency_p99_ns: u64,
+    /// p99.9 transport latency
+    pub transport_latency_p999_ns: u64,
+    /// p99.99 transport latency
+    pub transport_latency_p9999_ns: u64,
+    /// p50 end-to-end latency
+    pub end_to_end_latency_p50_ns: u64,
+    /// p90 end-to-end latency
+    pub end_to_end_latency_p90_ns: u64,
+    /// p99 end-to-end latency
+    pub end_to_end_latency_p99_ns: u64,
+    /// p99.9 end-to-end latency
+    pub end_to_end_latency_p999_ns: u64,
+    /// p99.99 end-to-end latency
+    pub end_to_end_latency_p9999_ns: u64,
     /// p50 round-trip latency
     pub round_trip_p50_ns: u64,
     /// p90 round-trip latency
@@ -82,6 +92,8 @@ pub struct BenchmarkResult {
     pub startup_latency_ns: u64,
     /// Attach latency
     pub attach_latency_ns: u64,
+    /// Parent orchestration wall time
+    pub orchestration_wall_time_ns: u64,
 }
 
 /// Percentile snapshot
@@ -103,13 +115,15 @@ impl BenchmarkResult {
     /// Benchmark metadata
     pub fn from_samples(
         context: BenchmarkResultContext,
-        latency_samples: &mut [u64],
+        transport_latency_samples: &mut [u64],
+        end_to_end_latency_samples: &mut [u64],
         round_trip_samples: &mut [u64],
     ) -> Self {
-        let latency = LatencyPercentiles::from_samples(latency_samples);
+        let transport_latency = LatencyPercentiles::from_samples(transport_latency_samples);
+        let end_to_end_latency = LatencyPercentiles::from_samples(end_to_end_latency_samples);
         let round_trip = LatencyPercentiles::from_samples(round_trip_samples);
         let throughput =
-            throughput_messages_per_second(context.measured_messages, context.wall_time_ns);
+            throughput_messages_per_second(context.measured_messages, context.measured_window_ns);
         let allocations_per_message =
             per_message(context.allocation_count, context.measured_messages);
         Self {
@@ -120,11 +134,16 @@ impl BenchmarkResult {
             publisher_count: context.publisher_count,
             subscriber_count: context.subscriber_count,
             measured_messages: context.measured_messages,
-            latency_p50_ns: latency.p50_ns,
-            latency_p90_ns: latency.p90_ns,
-            latency_p99_ns: latency.p99_ns,
-            latency_p999_ns: latency.p999_ns,
-            latency_p9999_ns: latency.p9999_ns,
+            transport_latency_p50_ns: transport_latency.p50_ns,
+            transport_latency_p90_ns: transport_latency.p90_ns,
+            transport_latency_p99_ns: transport_latency.p99_ns,
+            transport_latency_p999_ns: transport_latency.p999_ns,
+            transport_latency_p9999_ns: transport_latency.p9999_ns,
+            end_to_end_latency_p50_ns: end_to_end_latency.p50_ns,
+            end_to_end_latency_p90_ns: end_to_end_latency.p90_ns,
+            end_to_end_latency_p99_ns: end_to_end_latency.p99_ns,
+            end_to_end_latency_p999_ns: end_to_end_latency.p999_ns,
+            end_to_end_latency_p9999_ns: end_to_end_latency.p9999_ns,
             round_trip_p50_ns: round_trip.p50_ns,
             round_trip_p90_ns: round_trip.p90_ns,
             round_trip_p99_ns: round_trip.p99_ns,
@@ -136,7 +155,7 @@ impl BenchmarkResult {
             ),
             cpu_utilization_per_mille: cpu_utilization_per_mille(
                 context.cpu_time_ns,
-                context.wall_time_ns,
+                context.measured_window_ns,
             ),
             rss_bytes: context.rss_bytes,
             pss_bytes: context.pss_bytes,
@@ -148,6 +167,7 @@ impl BenchmarkResult {
             backpressure_pinned_slot: context.backpressure_pinned_slot,
             startup_latency_ns: context.startup_latency_ns,
             attach_latency_ns: context.attach_latency_ns,
+            orchestration_wall_time_ns: context.orchestration_wall_time_ns,
         }
     }
 }
@@ -170,7 +190,9 @@ pub struct BenchmarkResultContext {
     /// Internal documentation
     pub measured_messages: u64,
     /// Internal documentation
-    pub wall_time_ns: u64,
+    pub measured_window_ns: u64,
+    /// Internal documentation
+    pub orchestration_wall_time_ns: u64,
     /// Allocation count
     pub allocation_count: u64,
     /// CPU time

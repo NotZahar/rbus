@@ -1,5 +1,7 @@
+use std::io::{Read, StdoutLock, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use rbus_core::warning::{Warning, WarningCode};
@@ -9,13 +11,15 @@ use crate::baseline::enforce_regression_gates;
 use crate::daemon_process::DaemonProcess;
 use crate::metrics::{BenchmarkResult, BenchmarkResultContext};
 use crate::output_format::OutputFormat;
-use crate::report::SuiteReport;
+use crate::report::{CSV_HEADER, SuiteReport, result_csv_line};
 use crate::suite_matrix::{
-    depth_for, measured_messages, selected_payload_sizes, selected_topologies, selected_wait_modes,
+    depth_for, measured_messages, messages_per_publisher_for_payload, selected_payload_sizes,
+    selected_topologies, selected_wait_modes,
 };
 use crate::suite_ready::{
-    create_ready_directory, ready_directory, ready_file, remove_ready_directory, wait_ready_files,
-    wait_ready_files_or_worker_exit,
+    attach_ready_file, create_ready_directory, ready_directory, remove_ready_directory, start_file,
+    wait_paths_or_worker_exit, warmup_start_file, worker_ready_file, write_start_file,
+    write_warmup_start_file,
 };
 use crate::suite_repetition::aggregate_repeated_results;
 use crate::suite_worker_output::ParsedWorkerOutput;
@@ -24,15 +28,41 @@ use crate::system_metrics::monotonic_time_ns;
 use crate::topology::{ScenarioKind, Topology};
 use crate::transport_kind::{SUITE_TRANSPORTS, TransportKind};
 use crate::wait_mode::WaitMode;
-use crate::worker::{LATENCY_PREFIX, RESULT_PREFIX, WorkerReport, WorkerRole};
+use crate::worker::{
+    END_TO_END_LATENCY_PREFIX, RESULT_PREFIX, ROUND_TRIP_PREFIX, TRANSPORT_LATENCY_PREFIX,
+    WorkerReport, WorkerRole,
+};
 
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
 const SUITE_DOMAIN_PREFIX: &str = "rbus-suite";
 const WORKER_WAIT_POLL_INTERVAL_MS: u64 = 1;
 const WORKER_REPORT_FIELD_COUNT: usize = 11;
 const WORKER_TIMEOUT_MS: u64 = 300_000;
+const SUITE_TIMEOUT_MINUTES: u64 = 20;
+const SECONDS_PER_MINUTE: u64 = 60;
+const NANOS_PER_SECOND: u64 = 1_000_000_000;
+const SUITE_TIMEOUT_NS: u64 = SUITE_TIMEOUT_MINUTES * SECONDS_PER_MINUTE * NANOS_PER_SECOND;
 
 pub fn run_suite(options: &SuiteOptions) -> Result<SuiteReport, Warning> {
+    run_suite_internal(options, None)
+}
+
+pub fn run_suite_csv_stream(options: &SuiteOptions) -> Result<(), Warning> {
+    let stdout = std::io::stdout();
+    let mut stdout = stdout.lock();
+    writeln!(stdout, "{CSV_HEADER}").map_err(|error| warning_from_io(error, "csv::header"))?;
+    stdout
+        .flush()
+        .map_err(|error| warning_from_io(error, "csv::flush_header"))?;
+    let _report = run_suite_internal(options, Some(&mut stdout))?;
+    Ok(())
+}
+
+fn run_suite_internal(
+    options: &SuiteOptions,
+    mut csv_stream: Option<&mut StdoutLock<'_>>,
+) -> Result<SuiteReport, Warning> {
+    let suite_started_at = monotonic_time_ns()?;
     let topologies = selected_topologies(options);
     let payload_sizes = selected_payload_sizes(options);
     let wait_modes = selected_wait_modes(options);
@@ -49,6 +79,7 @@ pub fn run_suite(options: &SuiteOptions) -> Result<SuiteReport, Warning> {
                             Vec::with_capacity(options.runs_per_scenario as usize);
                         let mut syscalls_per_message = None;
                         for _run_index in 0..options.runs_per_scenario {
+                            ensure_suite_time_budget(suite_started_at)?;
                             let result = run_topology(
                                 options,
                                 *topology,
@@ -62,7 +93,11 @@ pub fn run_suite(options: &SuiteOptions) -> Result<SuiteReport, Warning> {
                             repeated_results.push(result);
                             run_index = run_index.saturating_add(1);
                         }
-                        results.push(aggregate_repeated_results(&mut repeated_results));
+                        let result = aggregate_repeated_results(&mut repeated_results);
+                        if let Some(stream) = csv_stream.as_deref_mut() {
+                            write_csv_result(stream, &result)?;
+                        }
+                        results.push(result);
                     }
                 }
             }
@@ -84,6 +119,25 @@ pub fn run_suite(options: &SuiteOptions) -> Result<SuiteReport, Warning> {
         transports.len(),
         results,
     ))
+}
+
+fn write_csv_result(stream: &mut StdoutLock<'_>, result: &BenchmarkResult) -> Result<(), Warning> {
+    writeln!(stream, "{}", result_csv_line("ok", result))
+        .map_err(|error| warning_from_io(error, "write_csv_result::line"))?;
+    stream
+        .flush()
+        .map_err(|error| warning_from_io(error, "write_csv_result::flush"))
+}
+
+fn ensure_suite_time_budget(suite_started_at: u64) -> Result<(), Warning> {
+    if monotonic_time_ns()?.saturating_sub(suite_started_at) > SUITE_TIMEOUT_NS {
+        return Err(Warning::new(
+            WarningCode::Timeout,
+            COMPONENT_RBUS_BENCH,
+            "run_suite::timeout",
+        ));
+    }
+    Ok(())
 }
 
 pub fn print_suite_report(report: &SuiteReport, output_format: OutputFormat) {
@@ -114,14 +168,15 @@ fn run_topology(
         None
     };
     let startup_latency_ns = monotonic_time_ns()?.saturating_sub(startup_started_at);
-    let depth = depth_for(options.messages_per_publisher);
+    let messages_per_publisher = messages_per_publisher_for_payload(options, payload_size);
+    let depth = depth_for(payload_size, messages_per_publisher);
     let scenario_context = ScenarioContext {
-        options,
         topology,
         transport,
         wait_mode,
         payload_size,
         depth,
+        messages_per_publisher,
         domain: &domain,
         topic: &topic,
         response_topic: &response_topic,
@@ -132,51 +187,66 @@ fn run_topology(
     };
     let result = match topology.kind {
         ScenarioKind::OneWay | ScenarioKind::SlowSubscriber => run_one_way(scenario_context)?,
-        ScenarioKind::PingPong => run_ping_pong(scenario_context)?,
-        ScenarioKind::CrashSubscriber => run_crash_subscriber(scenario_context)?,
-        ScenarioKind::CrashPublisher => run_crash_publisher(scenario_context)?,
     };
     remove_ready_directory(&ready_directory)?;
     Ok(result)
 }
 
 fn run_one_way(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning> {
-    if context.transport.is_rbus() && context.wait_mode == WaitMode::BusyPoll {
-        return run_one_way_publishers_first(context);
-    }
     let mut subscribers = Vec::new();
+    let mut attach_ready_files = Vec::new();
+    let mut worker_ready_files = Vec::new();
     let attach_started_at = monotonic_time_ns()?;
     for subscriber_index in 0..context.topology.subscriber_count {
-        let ready_file = ready_file(context.ready_directory, subscriber_index);
+        let attach_ready_file = attach_ready_file(context.ready_directory, subscriber_index);
+        let ready_file = worker_ready_file(
+            context.ready_directory,
+            WorkerRole::Subscriber.as_str(),
+            subscriber_index,
+        );
+        attach_ready_files.push(attach_ready_file.clone());
+        worker_ready_files.push(ready_file.clone());
         subscribers.push(spawn_worker(worker_arguments(
             context,
             WorkerRole::Subscriber,
             subscriber_index,
             Some(&ready_file),
+            Some(&attach_ready_file),
         ))?);
     }
-    wait_ready_files_or_workers(
-        context.ready_directory,
-        context.topology.subscriber_count,
-        &mut subscribers,
-    )?;
+    wait_worker_ready_files(&attach_ready_files, &mut subscribers)?;
     let attach_latency_ns = monotonic_time_ns()?.saturating_sub(attach_started_at);
     let wall_started_at = monotonic_time_ns()?;
     let mut publishers = Vec::new();
+    let mut publisher_attach_ready_files = Vec::new();
     for publisher_index in 0..context.topology.publisher_count {
+        let attach_ready_file =
+            worker_ready_file(context.ready_directory, "attach-publisher", publisher_index);
+        let ready_file = worker_ready_file(
+            context.ready_directory,
+            WorkerRole::Publisher.as_str(),
+            publisher_index,
+        );
+        publisher_attach_ready_files.push(attach_ready_file.clone());
+        worker_ready_files.push(ready_file.clone());
         publishers.push(spawn_worker(worker_arguments(
             context,
             WorkerRole::Publisher,
             publisher_index,
-            None,
+            Some(&ready_file),
+            Some(&attach_ready_file),
         ))?);
     }
+    wait_worker_ready_files(&publisher_attach_ready_files, &mut publishers)?;
+    write_warmup_start_file(context.ready_directory)?;
+    let mut workers = Vec::new();
+    workers.append(&mut publishers);
+    workers.append(&mut subscribers);
+    wait_worker_ready_files(&worker_ready_files, &mut workers)?;
+    write_start_file(context.ready_directory)?;
     let mut parsed_outputs = Vec::new();
-    for publisher in publishers {
-        parsed_outputs.push(parse_worker_output(wait_for_worker(publisher, false)?)?);
-    }
-    for subscriber in subscribers {
-        parsed_outputs.push(parse_worker_output(wait_for_worker(subscriber, false)?)?);
+    for worker in workers {
+        parsed_outputs.push(parse_worker_output(wait_for_worker(worker, false)?)?);
     }
     let wall_time_ns = monotonic_time_ns()?.saturating_sub(wall_started_at);
     aggregate_result(
@@ -185,126 +255,6 @@ fn run_one_way(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning>
         Vec::new(),
         wall_time_ns,
         attach_latency_ns,
-    )
-}
-
-fn run_one_way_publishers_first(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning> {
-    let wall_started_at = monotonic_time_ns()?;
-    let mut publishers = Vec::new();
-    for publisher_index in 0..context.topology.publisher_count {
-        publishers.push(spawn_worker(worker_arguments(
-            context,
-            WorkerRole::Publisher,
-            publisher_index,
-            None,
-        ))?);
-    }
-    let attach_started_at = monotonic_time_ns()?;
-    let mut subscribers = Vec::new();
-    for subscriber_index in 0..context.topology.subscriber_count {
-        let ready_file = ready_file(context.ready_directory, subscriber_index);
-        subscribers.push(spawn_worker(worker_arguments(
-            context,
-            WorkerRole::Subscriber,
-            subscriber_index,
-            Some(&ready_file),
-        ))?);
-    }
-    wait_ready_files_or_workers(
-        context.ready_directory,
-        context.topology.subscriber_count,
-        &mut subscribers,
-    )?;
-    let attach_latency_ns = monotonic_time_ns()?.saturating_sub(attach_started_at);
-    let mut parsed_outputs = Vec::new();
-    for publisher in publishers {
-        parsed_outputs.push(parse_worker_output(wait_for_worker(publisher, false)?)?);
-    }
-    for subscriber in subscribers {
-        parsed_outputs.push(parse_worker_output(wait_for_worker(subscriber, false)?)?);
-    }
-    let wall_time_ns = monotonic_time_ns()?.saturating_sub(wall_started_at);
-    aggregate_result(
-        context,
-        parsed_outputs,
-        Vec::new(),
-        wall_time_ns,
-        attach_latency_ns,
-    )
-}
-
-fn run_ping_pong(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning> {
-    let ready_file = ready_file(context.ready_directory, 0);
-    let attach_started_at = monotonic_time_ns()?;
-    let responder = spawn_worker(worker_arguments(
-        context,
-        WorkerRole::PingResponder,
-        0,
-        Some(&ready_file),
-    ))?;
-    wait_ready_files(context.ready_directory, 1)?;
-    let attach_latency_ns = monotonic_time_ns()?.saturating_sub(attach_started_at);
-    let wall_started_at = monotonic_time_ns()?;
-    let requester = spawn_worker(worker_arguments(
-        context,
-        WorkerRole::PingRequester,
-        0,
-        None,
-    ))?;
-    let requester_output = parse_worker_output(wait_for_worker(requester, false)?)?;
-    let responder_output = parse_worker_output(wait_for_worker(responder, false)?)?;
-    let wall_time_ns = monotonic_time_ns()?.saturating_sub(wall_started_at);
-    aggregate_result(
-        context,
-        vec![requester_output.clone_report_only(), responder_output],
-        requester_output.latencies,
-        wall_time_ns,
-        attach_latency_ns,
-    )
-}
-
-fn run_crash_subscriber(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning> {
-    let ready_file = ready_file(context.ready_directory, 0);
-    let crash_subscriber = spawn_worker(worker_arguments(
-        context,
-        WorkerRole::CrashSubscriber,
-        0,
-        Some(&ready_file),
-    ))?;
-    wait_ready_files(context.ready_directory, 1)?;
-    let wall_started_at = monotonic_time_ns()?;
-    let publisher = spawn_worker(worker_arguments(context, WorkerRole::Publisher, 0, None))?;
-    let publisher_output = parse_worker_output(wait_for_worker(publisher, false)?)?;
-    let _crash_output = wait_for_worker(crash_subscriber, true)?;
-    let wall_time_ns = monotonic_time_ns()?.saturating_sub(wall_started_at);
-    aggregate_result(context, vec![publisher_output], Vec::new(), wall_time_ns, 0)
-}
-
-fn run_crash_publisher(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning> {
-    let ready_file = ready_file(context.ready_directory, 0);
-    let subscriber = spawn_worker(worker_arguments(
-        context,
-        WorkerRole::Subscriber,
-        0,
-        Some(&ready_file),
-    ))?;
-    wait_ready_files(context.ready_directory, 1)?;
-    let wall_started_at = monotonic_time_ns()?;
-    let crash_publisher = spawn_worker(worker_arguments(
-        context,
-        WorkerRole::CrashPublisher,
-        0,
-        None,
-    ))?;
-    let _crash_output = wait_for_worker(crash_publisher, true)?;
-    let subscriber_output = parse_worker_output(wait_for_worker(subscriber, false)?)?;
-    let wall_time_ns = monotonic_time_ns()?.saturating_sub(wall_started_at);
-    aggregate_result(
-        context,
-        vec![subscriber_output],
-        Vec::new(),
-        wall_time_ns,
-        0,
     )
 }
 
@@ -315,10 +265,14 @@ fn aggregate_result(
     wall_time_ns: u64,
     attach_latency_ns: u64,
 ) -> Result<BenchmarkResult, Warning> {
-    let mut latency_samples = Vec::new();
+    let mut transport_latency_samples = Vec::new();
+    let mut end_to_end_latency_samples = Vec::new();
+    let mut round_trip_samples = round_trip_samples;
     let mut reports = Vec::new();
     for output in outputs {
-        latency_samples.extend(output.latencies);
+        transport_latency_samples.extend(output.transport_latencies);
+        end_to_end_latency_samples.extend(output.end_to_end_latencies);
+        round_trip_samples.extend(output.round_trip_latencies);
         reports.push(
             output
                 .report
@@ -338,10 +292,9 @@ fn aggregate_result(
             wait_mode: context.wait_mode,
             payload_size: context.payload_size,
             depth: context.depth,
-            messages_per_publisher: context.options.messages_per_publisher,
+            messages_per_publisher: context.messages_per_publisher,
         })?,
     };
-    let mut round_trip_samples = round_trip_samples;
     Ok(BenchmarkResult::from_samples(
         BenchmarkResultContext {
             scenario: context.topology.name,
@@ -354,9 +307,10 @@ fn aggregate_result(
                 context.topology.kind,
                 context.topology.publisher_count,
                 context.topology.subscriber_count,
-                context.options.messages_per_publisher,
+                context.messages_per_publisher,
             ),
-            wall_time_ns,
+            measured_window_ns: aggregate.duration_ns,
+            orchestration_wall_time_ns: wall_time_ns,
             allocation_count: aggregate.allocations,
             cpu_time_ns: aggregate.cpu_time_ns,
             rss_bytes: aggregate.rss_bytes,
@@ -369,7 +323,8 @@ fn aggregate_result(
             startup_latency_ns: context.startup_latency_ns,
             attach_latency_ns,
         },
-        &mut latency_samples,
+        &mut transport_latency_samples,
+        &mut end_to_end_latency_samples,
         &mut round_trip_samples,
     ))
 }
@@ -379,6 +334,7 @@ fn worker_arguments(
     role: WorkerRole,
     worker_index: u8,
     ready_file: Option<&Path>,
+    attach_ready_file: Option<&Path>,
 ) -> Vec<String> {
     let mut arguments = vec![
         String::from("--suite-worker"),
@@ -400,7 +356,7 @@ fn worker_arguments(
         String::from("--subscriber-count"),
         context.topology.subscriber_count.to_string(),
         String::from("--messages"),
-        context.options.messages_per_publisher.to_string(),
+        context.messages_per_publisher.to_string(),
         String::from("--wait-mode"),
         context.wait_mode.as_str().to_owned(),
         String::from("--transport"),
@@ -413,6 +369,18 @@ fn worker_arguments(
         arguments.push(String::from("--ready-file"));
         arguments.push(path.display().to_string());
     }
+    if let Some(path) = attach_ready_file {
+        arguments.push(String::from("--attach-ready-file"));
+        arguments.push(path.display().to_string());
+    }
+    arguments.push(String::from("--start-file"));
+    arguments.push(start_file(context.ready_directory).display().to_string());
+    arguments.push(String::from("--warmup-start-file"));
+    arguments.push(
+        warmup_start_file(context.ready_directory)
+            .display()
+            .to_string(),
+    );
     arguments
 }
 
@@ -426,14 +394,15 @@ fn spawn_worker(arguments: Vec<String>) -> Result<Child, Warning> {
 }
 
 fn wait_for_worker(mut child: Child, allow_failure: bool) -> Result<Output, Warning> {
+    let stdout_reader = child.stdout.take().map(spawn_pipe_reader);
+    let stderr_reader = child.stderr.take().map(spawn_pipe_reader);
     let started_at = monotonic_time_ns()?;
-    loop {
-        if child
+    let status = loop {
+        if let Some(status) = child
             .try_wait()
             .map_err(|error| warning_from_io(error, "wait_for_worker::try_wait"))?
-            .is_some()
         {
-            break;
+            break status;
         }
         if monotonic_time_ns()?.saturating_sub(started_at)
             > Duration::from_millis(WORKER_TIMEOUT_MS).as_nanos() as u64
@@ -441,13 +410,22 @@ fn wait_for_worker(mut child: Child, allow_failure: bool) -> Result<Output, Warn
             child
                 .kill()
                 .map_err(|error| warning_from_io(error, "wait_for_worker::kill"))?;
+            child
+                .wait()
+                .map_err(|error| warning_from_io(error, "wait_for_worker::wait_after_kill"))?;
+            let _stdout = join_pipe_reader(stdout_reader, "wait_for_worker::stdout_after_kill")?;
+            let _stderr = join_pipe_reader(stderr_reader, "wait_for_worker::stderr_after_kill")?;
             return Err(warning("wait_for_worker::timeout"));
         }
         std::thread::sleep(Duration::from_millis(WORKER_WAIT_POLL_INTERVAL_MS));
-    }
-    let output = child
-        .wait_with_output()
-        .map_err(|error| warning_from_io(error, "wait_for_worker::output"))?;
+    };
+    let stdout = join_pipe_reader(stdout_reader, "wait_for_worker::stdout")?;
+    let stderr = join_pipe_reader(stderr_reader, "wait_for_worker::stderr")?;
+    let output = Output {
+        status,
+        stdout,
+        stderr,
+    };
     if !output.status.success() && !allow_failure {
         print_child_stderr(&output);
         return Err(warning("wait_for_worker::status"));
@@ -458,6 +436,30 @@ fn wait_for_worker(mut child: Child, allow_failure: bool) -> Result<Output, Warn
     Ok(output)
 }
 
+fn spawn_pipe_reader<Pipe>(mut pipe: Pipe) -> JoinHandle<Result<Vec<u8>, std::io::Error>>
+where
+    Pipe: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut output = Vec::new();
+        pipe.read_to_end(&mut output)?;
+        Ok(output)
+    })
+}
+
+fn join_pipe_reader(
+    reader: Option<JoinHandle<Result<Vec<u8>, std::io::Error>>>,
+    operation: &'static str,
+) -> Result<Vec<u8>, Warning> {
+    match reader {
+        Some(reader) => reader
+            .join()
+            .map_err(|_| warning(operation))?
+            .map_err(|error| warning_from_io(error, operation)),
+        None => Ok(Vec::new()),
+    }
+}
+
 fn parse_worker_output(output: Output) -> Result<ParsedWorkerOutput, Warning> {
     if !output.stderr.is_empty() {
         print_child_stderr(&output);
@@ -466,12 +468,22 @@ fn parse_worker_output(output: Output) -> Result<ParsedWorkerOutput, Warning> {
         .map_err(|_| warning("parse_worker_output::stdout_utf8"))?;
     let mut parsed = ParsedWorkerOutput {
         report: None,
-        latencies: Vec::new(),
+        transport_latencies: Vec::new(),
+        end_to_end_latencies: Vec::new(),
+        round_trip_latencies: Vec::new(),
     };
     for line in stdout.lines() {
-        if let Some(value) = line.strip_prefix(LATENCY_PREFIX) {
+        if let Some(value) = line.strip_prefix(TRANSPORT_LATENCY_PREFIX) {
             parsed
-                .latencies
+                .transport_latencies
+                .push(value.parse::<u64>().map_err(|_| warning("parse_latency"))?);
+        } else if let Some(value) = line.strip_prefix(END_TO_END_LATENCY_PREFIX) {
+            parsed
+                .end_to_end_latencies
+                .push(value.parse::<u64>().map_err(|_| warning("parse_latency"))?);
+        } else if let Some(value) = line.strip_prefix(ROUND_TRIP_PREFIX) {
+            parsed
+                .round_trip_latencies
                 .push(value.parse::<u64>().map_err(|_| warning("parse_latency"))?);
         } else if let Some(value) = line.strip_prefix(RESULT_PREFIX) {
             parsed.report = Some(parse_worker_report(value)?);
@@ -517,12 +529,8 @@ fn parse_report_value(value: &str) -> Result<u64, Warning> {
         .map_err(|_| warning("parse_worker_report::value"))
 }
 
-fn wait_ready_files_or_workers(
-    directory: &Path,
-    count: u8,
-    workers: &mut Vec<Child>,
-) -> Result<(), Warning> {
-    if let Some(worker) = wait_ready_files_or_worker_exit(directory, count, workers)? {
+fn wait_worker_ready_files(paths: &[PathBuf], workers: &mut Vec<Child>) -> Result<(), Warning> {
+    if let Some(worker) = wait_paths_or_worker_exit(paths, workers)? {
         let _output = wait_for_worker(worker, false)?;
         return Err(warning("wait_ready_files::worker_exit"));
     }
@@ -576,12 +584,12 @@ fn warning_from_io(error: std::io::Error, operation: &'static str) -> Warning {
 
 #[derive(Clone, Copy)]
 struct ScenarioContext<'a> {
-    options: &'a SuiteOptions,
     topology: Topology,
     transport: TransportKind,
     wait_mode: WaitMode,
     payload_size: usize,
     depth: usize,
+    messages_per_publisher: u32,
     domain: &'a str,
     topic: &'a str,
     response_topic: &'a str,

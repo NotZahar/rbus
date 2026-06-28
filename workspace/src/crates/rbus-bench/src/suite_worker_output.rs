@@ -3,14 +3,7 @@ use crate::worker::WorkerReport;
 #[derive(Clone, Debug)]
 pub(crate) struct ParsedWorkerOutput {
     pub(crate) report: Option<WorkerReport>,
-    pub(crate) latencies: Vec<u64>,
-}
-
-impl ParsedWorkerOutput {
-    pub(crate) fn clone_report_only(&self) -> Self {
-        Self {
-            report: self.report,
-            latencies: Vec::new(),
-        }
-    }
+    pub(crate) transport_latencies: Vec<u64>,
+    pub(crate) end_to_end_latencies: Vec<u64>,
+    pub(crate) round_trip_latencies: Vec<u64>,
 }

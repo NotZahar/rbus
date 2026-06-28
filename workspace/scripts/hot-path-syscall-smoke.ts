@@ -128,7 +128,7 @@ function main() {
   const temporaryDirectory = mkdtempSync(join(tmpdir(), "rbus-hot-path-syscall-"));
   try {
     requireTool("strace");
-    runCommand("cargo", ["build", "-p", "rbusd", "-p", "rbus-bench"]);
+    runCommand("cargo", ["build", "--profile", "bench", "-p", "rbusd", "-p", "rbus-bench"]);
     for (const operation of operations) {
       runProbe(operation, temporaryDirectory);
     }

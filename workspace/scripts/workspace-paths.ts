@@ -8,6 +8,6 @@ const sourceRoot = resolve(workspaceRoot, "src");
 export const workspacePaths = {
   scriptsRoot,
   sourceRoot,
-  rbusBenchBinary: resolve(sourceRoot, "target", "debug", "rbus-bench"),
+  rbusBenchBinary: resolve(sourceRoot, "target", "release", "rbus-bench"),
   hotPathSyscallSmokeScript: resolve(scriptsRoot, "hot-path-syscall-smoke.ts"),
 } as const;

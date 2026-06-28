@@ -7,8 +7,8 @@ use crate::hot_path_syscall::HotPathOperation;
 use crate::output_format::OutputFormat;
 use crate::worker::{WorkerArguments, WorkerRole};
 
-const DEFAULT_MESSAGES_PER_PUBLISHER: u32 = 32;
-const DEFAULT_RUNS_PER_SCENARIO: u32 = 5;
+const DEFAULT_MESSAGES_PER_PUBLISHER: u32 = 100_000;
+const DEFAULT_RUNS_PER_SCENARIO: u32 = 1;
 
 /// Benchmark metadata
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

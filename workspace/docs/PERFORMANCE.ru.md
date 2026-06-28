@@ -111,3 +111,11 @@ Benchmark suite дополнительно измеряет `syscalls/message` �
 multi-process matrix. Это отдельный `strace -c` pass после основного timing pass,
 поэтому latency и throughput regression gate не искажаются overhead-ом трассировки,
 а syscall budget проверяется измерением реальных worker-процессов.
+
+Benchmark throughput считается по max `duration_ns` worker-ов внутри measured
+window после общего start flag. Parent wall-clock сохраняется только как
+`orchestration_wall_time_ns`. One-way latency разделена на
+`transport_latency_*_ns` с timestamp после подготовки payload и
+`end_to_end_latency_*_ns` с timestamp перед генерацией payload. Перед measured
+window publisher pre-fault/pre-touch-ит все slots ring-а минимум `depth`
+warmup-сообщениями.

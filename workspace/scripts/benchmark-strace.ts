@@ -34,7 +34,7 @@ function requireNoArguments(argumentsList: string[]) {
 
 function runStrace() {
   runCommand("strace", ["--version"]);
-  runCommand("cargo", ["build", "-p", "rbusd", "-p", "rbus-bench"]);
+  runCommand("cargo", ["build", "--profile", "bench", "-p", "rbusd", "-p", "rbus-bench"]);
   runCommand("node", [workspacePaths.hotPathSyscallSmokeScript]);
   runCommand(workspacePaths.rbusBenchBinary, [
     "--suite",

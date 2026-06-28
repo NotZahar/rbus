@@ -4,12 +4,13 @@ use crate::args::{BenchArguments, BenchMode};
 use crate::blocking_wait::blocking_wait_wake_latency_ns;
 use crate::hot_path_syscall::run_probe;
 use crate::metrics::MetricsSnapshot;
+use crate::output_format::OutputFormat;
 use crate::payload::PAYLOAD_SIZES;
 use crate::pinning::pinning_enabled;
 use crate::process::benchmark_process_id;
 use crate::report::{SmokeReport, SmokeReportContext};
 use crate::scenarios::SCENARIO_NAMES;
-use crate::suite::{print_suite_report, run_suite};
+use crate::suite::{print_suite_report, run_suite, run_suite_csv_stream};
 use crate::topology::TOPOLOGIES;
 use crate::transports::TRANSPORT_NAMES;
 use crate::worker::run_worker;
@@ -21,12 +22,18 @@ pub fn run(arguments: BenchArguments) -> ExitCode {
     match arguments.mode {
         BenchMode::Help => ExitCode::SUCCESS,
         BenchMode::Smoke => run_smoke(),
-        BenchMode::Suite(options) => match run_suite(&options) {
-            Ok(report) => {
-                print_suite_report(&report, options.output_format);
-                ExitCode::SUCCESS
-            }
-            Err(warning) => warning_exit(warning),
+        BenchMode::Suite(options) => match options.output_format {
+            OutputFormat::Csv => match run_suite_csv_stream(&options) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(warning) => warning_exit(warning),
+            },
+            OutputFormat::Json => match run_suite(&options) {
+                Ok(report) => {
+                    print_suite_report(&report, options.output_format);
+                    ExitCode::SUCCESS
+                }
+                Err(warning) => warning_exit(warning),
+            },
         },
         BenchMode::HotPathSyscallProbe(operation) => match run_probe(operation) {
             Ok(report) => {

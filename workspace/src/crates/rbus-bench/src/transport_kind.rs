@@ -1,45 +1,42 @@
 use crate::topology::ScenarioKind;
 use crate::transports::{
-    pipe, posix_mq, rbus_loaned, rbus_publish_bytes, tcp_loopback, unix_socket,
+    rbus_loaned_fill, rbus_loaned_metadata_only, rbus_publish_bytes, unix_socket,
+    unix_socket_end_to_end,
 };
 
 /// Benchmark metadata
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransportKind {
-    /// Zero-copy loaned path
-    RbusLoaned,
+    /// Zero-copy loaned metadata path
+    RbusLoanedMetadataOnly,
+    /// Zero-copy loaned fill path
+    RbusLoanedFill,
     /// Convenience `publish_bytes` path
     RbusPublishBytes,
     /// Unix domain socket stream baseline
     UnixSocket,
-    /// FIFO pipe baseline
-    Pipe,
-    /// TCP loopback stream baseline
-    TcpLoopback,
-    /// POSIX message queue baseline
-    PosixMessageQueue,
+    /// Unix domain socket stream end-to-end baseline
+    UnixSocketEndToEnd,
 }
 
 /// Benchmark metadata
 pub const SUITE_TRANSPORTS: &[TransportKind] = &[
-    TransportKind::RbusLoaned,
+    TransportKind::RbusLoanedMetadataOnly,
+    TransportKind::RbusLoanedFill,
     TransportKind::RbusPublishBytes,
     TransportKind::UnixSocket,
-    TransportKind::Pipe,
-    TransportKind::TcpLoopback,
-    TransportKind::PosixMessageQueue,
+    TransportKind::UnixSocketEndToEnd,
 ];
 
 impl TransportKind {
     /// Benchmark metadata
     pub fn parse(value: &str) -> Option<Self> {
         match value {
-            rbus_loaned::TRANSPORT_NAME => Some(Self::RbusLoaned),
+            rbus_loaned_metadata_only::TRANSPORT_NAME => Some(Self::RbusLoanedMetadataOnly),
+            rbus_loaned_fill::TRANSPORT_NAME => Some(Self::RbusLoanedFill),
             rbus_publish_bytes::TRANSPORT_NAME => Some(Self::RbusPublishBytes),
             unix_socket::TRANSPORT_NAME => Some(Self::UnixSocket),
-            pipe::TRANSPORT_NAME => Some(Self::Pipe),
-            tcp_loopback::TRANSPORT_NAME => Some(Self::TcpLoopback),
-            posix_mq::TRANSPORT_NAME => Some(Self::PosixMessageQueue),
+            unix_socket_end_to_end::TRANSPORT_NAME => Some(Self::UnixSocketEndToEnd),
             _ => None,
         }
     }
@@ -47,26 +44,30 @@ impl TransportKind {
     /// Benchmark metadata
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::RbusLoaned => rbus_loaned::TRANSPORT_NAME,
+            Self::RbusLoanedMetadataOnly => rbus_loaned_metadata_only::TRANSPORT_NAME,
+            Self::RbusLoanedFill => rbus_loaned_fill::TRANSPORT_NAME,
             Self::RbusPublishBytes => rbus_publish_bytes::TRANSPORT_NAME,
             Self::UnixSocket => unix_socket::TRANSPORT_NAME,
-            Self::Pipe => pipe::TRANSPORT_NAME,
-            Self::TcpLoopback => tcp_loopback::TRANSPORT_NAME,
-            Self::PosixMessageQueue => posix_mq::TRANSPORT_NAME,
+            Self::UnixSocketEndToEnd => unix_socket_end_to_end::TRANSPORT_NAME,
         }
     }
 
     /// Benchmark metadata
     pub const fn is_rbus(self) -> bool {
-        matches!(self, Self::RbusLoaned | Self::RbusPublishBytes)
+        matches!(
+            self,
+            Self::RbusLoanedMetadataOnly | Self::RbusLoanedFill | Self::RbusPublishBytes
+        )
     }
 
     /// Benchmark metadata
     pub const fn supports_scenario(self, scenario_kind: ScenarioKind) -> bool {
-        self.is_rbus()
-            || matches!(
-                scenario_kind,
-                ScenarioKind::OneWay | ScenarioKind::PingPong | ScenarioKind::SlowSubscriber
-            )
+        match scenario_kind {
+            ScenarioKind::OneWay | ScenarioKind::SlowSubscriber => true,
+        }
+    }
+
+    pub const fn fills_payload_in_measured_window(self) -> bool {
+        matches!(self, Self::RbusLoanedFill | Self::UnixSocketEndToEnd)
     }
 }

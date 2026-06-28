@@ -25,6 +25,7 @@ mod transport_kind;
 mod transports;
 mod wait_mode;
 mod worker;
+mod worker_args;
 
 use std::process::ExitCode;
 

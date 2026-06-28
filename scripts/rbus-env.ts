@@ -107,17 +107,17 @@ function runCheckSuite() {
   runInContainer("cargo test --workspace --all-features");
   runInContainer("cargo test --workspace --no-default-features");
   runInContainer("RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps");
-  runInContainer("cargo run -p rbus-bench -- --smoke");
+  runInContainer("cargo build --profile bench -p rbusd -p rbus-bench && target/release/rbus-bench --smoke");
   runBenchSuiteSmoke();
   runInContainer("cargo run -p rbus-cli -- --help >/tmp/rbus-cli-help.txt && test -s /tmp/rbus-cli-help.txt");
 }
 
 function runBenchSmoke() {
-  runInContainer("cargo run -p rbus-bench -- --smoke");
+  runInContainer("cargo build --profile bench -p rbusd -p rbus-bench && target/release/rbus-bench --smoke");
 }
 
 function runBenchSuiteSmoke() {
-  runInContainer("cargo build -p rbusd && cargo run -p rbus-bench -- --suite --matrix-smoke --messages 1 --format csv --no-gate");
+  runInContainer("cargo build --profile bench -p rbusd -p rbus-bench && target/release/rbus-bench --suite --matrix-smoke --messages 1 --format csv --no-gate");
 }
 
 function runHotPathSyscallSmoke() {

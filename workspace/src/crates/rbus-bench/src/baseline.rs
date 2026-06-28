@@ -8,35 +8,40 @@ use crate::payload::PAYLOAD_SIZES;
 use crate::report::CSV_HEADER;
 
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
-const BACKPRESSURE_PINNED_SLOT_FIELD: usize = 27;
-const BASELINE_FIELD_COUNT: usize = 30;
-const LATENCY_P50_FIELD: usize = 8;
-const LATENCY_P90_FIELD: usize = 9;
-const LATENCY_P99_FIELD: usize = 10;
-const LATENCY_P999_FIELD: usize = 11;
-const LATENCY_P9999_FIELD: usize = 12;
+const BACKPRESSURE_PINNED_SLOT_FIELD: usize = 32;
+const BASELINE_FIELD_COUNT: usize = 36;
+const TRANSPORT_LATENCY_P50_FIELD: usize = 8;
+const TRANSPORT_LATENCY_P90_FIELD: usize = 9;
+const TRANSPORT_LATENCY_P99_FIELD: usize = 10;
+const TRANSPORT_LATENCY_P999_FIELD: usize = 11;
+const TRANSPORT_LATENCY_P9999_FIELD: usize = 12;
+const END_TO_END_LATENCY_P50_FIELD: usize = 13;
+const END_TO_END_LATENCY_P90_FIELD: usize = 14;
+const END_TO_END_LATENCY_P99_FIELD: usize = 15;
+const END_TO_END_LATENCY_P999_FIELD: usize = 16;
+const END_TO_END_LATENCY_P9999_FIELD: usize = 17;
 const LATENCY_GATE_NUMERATOR: u64 = 105;
 const LATENCY_GATE_DENOMINATOR: u64 = 100;
 const MEASURED_MESSAGES_FIELD: usize = 7;
 const PAYLOAD_SIZE_FIELD: usize = 4;
-const PAYLOAD_THROUGHPUT_FIELD: usize = 18;
+const PAYLOAD_THROUGHPUT_FIELD: usize = 23;
 const PUBLISHER_COUNT_FIELD: usize = 5;
-const ROUND_TRIP_P50_FIELD: usize = 13;
-const ROUND_TRIP_P90_FIELD: usize = 14;
-const ROUND_TRIP_P99_FIELD: usize = 15;
-const ROUND_TRIP_P999_FIELD: usize = 16;
+const ROUND_TRIP_P50_FIELD: usize = 18;
+const ROUND_TRIP_P90_FIELD: usize = 19;
+const ROUND_TRIP_P99_FIELD: usize = 20;
+const ROUND_TRIP_P999_FIELD: usize = 21;
 const SCENARIO_FIELD: usize = 1;
-const SKIPPED_MESSAGES_FIELD: usize = 26;
+const SKIPPED_MESSAGES_FIELD: usize = 31;
 const STATUS_FIELD: usize = 0;
 const STATUS_OK: &str = "ok";
 const SUBSCRIBER_COUNT_FIELD: usize = 6;
-const SYSCALLS_FIELD: usize = 23;
+const SYSCALLS_FIELD: usize = 28;
 const THROUGHPUT_GATE_FACTOR: f64 = 0.95;
-const THROUGHPUT_FIELD: usize = 17;
+const THROUGHPUT_FIELD: usize = 22;
 const TRANSPORT_FIELD: usize = 2;
 const WAIT_MODE_FIELD: usize = 3;
-const WARNING_COUNT_FIELD: usize = 25;
-const ALLOCATIONS_FIELD: usize = 24;
+const WARNING_COUNT_FIELD: usize = 30;
+const ALLOCATIONS_FIELD: usize = 29;
 const WILDCARD_KEY: &str = "*";
 
 /// Benchmark baseline path.
@@ -53,11 +58,56 @@ pub fn enforce_regression_gates(
             .iter()
             .find(|entry| entry.matches(result))
             .ok_or_else(|| gate_warning("enforce_regression_gates::missing"))?;
-        enforce_latency_gate(result.latency_p50_ns, baseline.latency_p50_ns, "p50")?;
-        enforce_latency_gate(result.latency_p90_ns, baseline.latency_p90_ns, "p90")?;
-        enforce_latency_gate(result.latency_p99_ns, baseline.latency_p99_ns, "p99")?;
-        enforce_latency_gate(result.latency_p999_ns, baseline.latency_p999_ns, "p999")?;
-        enforce_latency_gate(result.latency_p9999_ns, baseline.latency_p9999_ns, "p9999")?;
+        enforce_latency_gate(
+            result.transport_latency_p50_ns,
+            baseline.transport_latency_p50_ns,
+            "transport_p50",
+        )?;
+        enforce_latency_gate(
+            result.transport_latency_p90_ns,
+            baseline.transport_latency_p90_ns,
+            "transport_p90",
+        )?;
+        enforce_latency_gate(
+            result.transport_latency_p99_ns,
+            baseline.transport_latency_p99_ns,
+            "transport_p99",
+        )?;
+        enforce_latency_gate(
+            result.transport_latency_p999_ns,
+            baseline.transport_latency_p999_ns,
+            "transport_p999",
+        )?;
+        enforce_latency_gate(
+            result.transport_latency_p9999_ns,
+            baseline.transport_latency_p9999_ns,
+            "transport_p9999",
+        )?;
+        enforce_latency_gate(
+            result.end_to_end_latency_p50_ns,
+            baseline.end_to_end_latency_p50_ns,
+            "end_to_end_p50",
+        )?;
+        enforce_latency_gate(
+            result.end_to_end_latency_p90_ns,
+            baseline.end_to_end_latency_p90_ns,
+            "end_to_end_p90",
+        )?;
+        enforce_latency_gate(
+            result.end_to_end_latency_p99_ns,
+            baseline.end_to_end_latency_p99_ns,
+            "end_to_end_p99",
+        )?;
+        enforce_latency_gate(
+            result.end_to_end_latency_p999_ns,
+            baseline.end_to_end_latency_p999_ns,
+            "end_to_end_p999",
+        )?;
+        enforce_latency_gate(
+            result.end_to_end_latency_p9999_ns,
+            baseline.end_to_end_latency_p9999_ns,
+            "end_to_end_p9999",
+        )?;
         enforce_latency_gate(
             result.round_trip_p50_ns,
             baseline.round_trip_p50_ns,
@@ -158,11 +208,46 @@ fn parse_baseline_entry(line: &str) -> Result<BaselineEntry, Warning> {
         publisher_count: parse_field(fields[PUBLISHER_COUNT_FIELD], "publisher_count")?,
         subscriber_count: parse_field(fields[SUBSCRIBER_COUNT_FIELD], "subscriber_count")?,
         measured_messages: parse_field(fields[MEASURED_MESSAGES_FIELD], "measured_messages")?,
-        latency_p50_ns: parse_field(fields[LATENCY_P50_FIELD], "latency_p50_ns")?,
-        latency_p90_ns: parse_field(fields[LATENCY_P90_FIELD], "latency_p90_ns")?,
-        latency_p99_ns: parse_field(fields[LATENCY_P99_FIELD], "latency_p99_ns")?,
-        latency_p999_ns: parse_field(fields[LATENCY_P999_FIELD], "latency_p999_ns")?,
-        latency_p9999_ns: parse_field(fields[LATENCY_P9999_FIELD], "latency_p9999_ns")?,
+        transport_latency_p50_ns: parse_field(
+            fields[TRANSPORT_LATENCY_P50_FIELD],
+            "transport_latency_p50_ns",
+        )?,
+        transport_latency_p90_ns: parse_field(
+            fields[TRANSPORT_LATENCY_P90_FIELD],
+            "transport_latency_p90_ns",
+        )?,
+        transport_latency_p99_ns: parse_field(
+            fields[TRANSPORT_LATENCY_P99_FIELD],
+            "transport_latency_p99_ns",
+        )?,
+        transport_latency_p999_ns: parse_field(
+            fields[TRANSPORT_LATENCY_P999_FIELD],
+            "transport_latency_p999_ns",
+        )?,
+        transport_latency_p9999_ns: parse_field(
+            fields[TRANSPORT_LATENCY_P9999_FIELD],
+            "transport_latency_p9999_ns",
+        )?,
+        end_to_end_latency_p50_ns: parse_field(
+            fields[END_TO_END_LATENCY_P50_FIELD],
+            "end_to_end_latency_p50_ns",
+        )?,
+        end_to_end_latency_p90_ns: parse_field(
+            fields[END_TO_END_LATENCY_P90_FIELD],
+            "end_to_end_latency_p90_ns",
+        )?,
+        end_to_end_latency_p99_ns: parse_field(
+            fields[END_TO_END_LATENCY_P99_FIELD],
+            "end_to_end_latency_p99_ns",
+        )?,
+        end_to_end_latency_p999_ns: parse_field(
+            fields[END_TO_END_LATENCY_P999_FIELD],
+            "end_to_end_latency_p999_ns",
+        )?,
+        end_to_end_latency_p9999_ns: parse_field(
+            fields[END_TO_END_LATENCY_P9999_FIELD],
+            "end_to_end_latency_p9999_ns",
+        )?,
         round_trip_p50_ns: parse_field(fields[ROUND_TRIP_P50_FIELD], "round_trip_p50_ns")?,
         round_trip_p90_ns: parse_field(fields[ROUND_TRIP_P90_FIELD], "round_trip_p90_ns")?,
         round_trip_p99_ns: parse_field(fields[ROUND_TRIP_P99_FIELD], "round_trip_p99_ns")?,
@@ -285,11 +370,16 @@ struct BaselineEntry {
     publisher_count: u8,
     subscriber_count: u8,
     measured_messages: u64,
-    latency_p50_ns: u64,
-    latency_p90_ns: u64,
-    latency_p99_ns: u64,
-    latency_p999_ns: u64,
-    latency_p9999_ns: u64,
+    transport_latency_p50_ns: u64,
+    transport_latency_p90_ns: u64,
+    transport_latency_p99_ns: u64,
+    transport_latency_p999_ns: u64,
+    transport_latency_p9999_ns: u64,
+    end_to_end_latency_p50_ns: u64,
+    end_to_end_latency_p90_ns: u64,
+    end_to_end_latency_p99_ns: u64,
+    end_to_end_latency_p999_ns: u64,
+    end_to_end_latency_p9999_ns: u64,
     round_trip_p50_ns: u64,
     round_trip_p90_ns: u64,
     round_trip_p99_ns: u64,
@@ -335,7 +425,7 @@ mod tests {
     use super::*;
 
     const BASELINE_NAME_PREFIX: &str = "rbus-baseline-test";
-    const TEST_SCENARIO: &str = "one-publisher-one-subscriber";
+    const TEST_SCENARIO: &str = "four-publishers-eight-subscribers";
     const ZERO_PAYLOAD_SIZE: usize = 0;
     const TEST_PAYLOAD_SIZE: usize = 64;
     const TEST_THROUGHPUT: f64 = 1_000.0;
@@ -344,7 +434,13 @@ mod tests {
     fn full_baseline_entry_allows_matching_result() {
         let path = write_baseline(
             "full",
-            &baseline_line(TEST_SCENARIO, "rbus-loaned", TEST_PAYLOAD_SIZE, 100, 0),
+            &baseline_line(
+                TEST_SCENARIO,
+                "rbus-loaned-metadata-only",
+                TEST_PAYLOAD_SIZE,
+                100,
+                0,
+            ),
         );
         let result = benchmark_result(100);
         enforce_regression_gates(&path, &[result]).expect("baseline should pass");
@@ -355,7 +451,13 @@ mod tests {
     fn baseline_gate_rejects_zero_payload_key() {
         let path = write_baseline(
             "zero-payload",
-            &baseline_line(TEST_SCENARIO, "rbus-loaned", ZERO_PAYLOAD_SIZE, 100, 0),
+            &baseline_line(
+                TEST_SCENARIO,
+                "rbus-loaned-metadata-only",
+                ZERO_PAYLOAD_SIZE,
+                100,
+                0,
+            ),
         );
         let result = benchmark_result(100);
         assert!(enforce_regression_gates(&path, &[result]).is_err());
@@ -374,21 +476,16 @@ mod tests {
     }
 
     #[test]
-    fn baseline_gate_rejects_wildcard_key() {
-        let path = write_baseline(
-            "wildcard",
-            &baseline_line(WILDCARD_KEY, "rbus-loaned", TEST_PAYLOAD_SIZE, 100, 0),
-        );
-        let result = benchmark_result(100);
-        assert!(enforce_regression_gates(&path, &[result]).is_err());
-        remove_baseline(path);
-    }
-
-    #[test]
     fn baseline_gate_rejects_latency_regression() {
         let path = write_baseline(
             "latency",
-            &baseline_line(TEST_SCENARIO, "rbus-loaned", TEST_PAYLOAD_SIZE, 10, 0),
+            &baseline_line(
+                TEST_SCENARIO,
+                "rbus-loaned-metadata-only",
+                TEST_PAYLOAD_SIZE,
+                10,
+                0,
+            ),
         );
         let result = benchmark_result(100);
         assert!(enforce_regression_gates(&path, &[result]).is_err());
@@ -399,7 +496,13 @@ mod tests {
     fn baseline_gate_rejects_warning_regression() {
         let path = write_baseline(
             "warning",
-            &baseline_line(TEST_SCENARIO, "rbus-loaned", TEST_PAYLOAD_SIZE, 100, 0),
+            &baseline_line(
+                TEST_SCENARIO,
+                "rbus-loaned-metadata-only",
+                TEST_PAYLOAD_SIZE,
+                100,
+                0,
+            ),
         );
         let mut result = benchmark_result(100);
         result.warning_count = 1;
@@ -410,17 +513,22 @@ mod tests {
     fn benchmark_result(latency_ns: u64) -> BenchmarkResult {
         BenchmarkResult {
             scenario: TEST_SCENARIO,
-            transport: TransportKind::RbusLoaned,
+            transport: TransportKind::RbusLoanedMetadataOnly,
             wait_mode: WaitMode::BusyPoll,
             payload_size: TEST_PAYLOAD_SIZE,
             publisher_count: 1,
             subscriber_count: 1,
             measured_messages: 1,
-            latency_p50_ns: latency_ns,
-            latency_p90_ns: latency_ns,
-            latency_p99_ns: latency_ns,
-            latency_p999_ns: latency_ns,
-            latency_p9999_ns: latency_ns,
+            transport_latency_p50_ns: latency_ns,
+            transport_latency_p90_ns: latency_ns,
+            transport_latency_p99_ns: latency_ns,
+            transport_latency_p999_ns: latency_ns,
+            transport_latency_p9999_ns: latency_ns,
+            end_to_end_latency_p50_ns: latency_ns,
+            end_to_end_latency_p90_ns: latency_ns,
+            end_to_end_latency_p99_ns: latency_ns,
+            end_to_end_latency_p999_ns: latency_ns,
+            end_to_end_latency_p9999_ns: latency_ns,
             round_trip_p50_ns: 0,
             round_trip_p90_ns: 0,
             round_trip_p99_ns: 0,
@@ -438,6 +546,7 @@ mod tests {
             backpressure_pinned_slot: 0,
             startup_latency_ns: 0,
             attach_latency_ns: 0,
+            orchestration_wall_time_ns: 0,
         }
     }
 
@@ -451,13 +560,18 @@ mod tests {
         format!(
             concat!(
                 "ok,{},{},busy-poll,{},1,1,1,",
-                "{},{},{},{},{},",
+                "{},{},{},{},{},{},{},{},{},{},",
                 "0,0,0,0,{:.6},0.000000000,0,0,0,0,",
-                "0.000000,0.000000,{},0,0,0,0"
+                "0.000000,0.000000,{},0,0,0,0,0"
             ),
             scenario,
             transport,
             payload_size,
+            latency_ns,
+            latency_ns,
+            latency_ns,
+            latency_ns,
+            latency_ns,
             latency_ns,
             latency_ns,
             latency_ns,

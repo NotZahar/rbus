@@ -10,7 +10,7 @@ use rbus_ipc::unix_socket::default_socket_path;
 const WARNING_EXIT_CODE: i32 = 2;
 const DAEMON_WAIT_ATTEMPTS: usize = 100;
 const DAEMON_WAIT_STEP: Duration = Duration::from_millis(10);
-const TEST_PAYLOAD_SIZE: usize = 8;
+const TEST_PAYLOAD_SIZE: usize = 16;
 const TEST_DEPTH: usize = 8;
 const FIRST_WORKER_INDEX: u8 = 0;
 const ONE_PUBLISHER: u8 = 1;

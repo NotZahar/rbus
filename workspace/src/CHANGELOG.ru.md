@@ -39,9 +39,14 @@
 - `loan_in_progress: AtomicBool` удалён: `Publisher::loan` и `Publisher::publish_bytes` теперь требуют `&mut self`, `LoanedMessage` удерживает `&mut Publisher`, второй outstanding loan не компилируется, а `Publisher` намеренно не является `Sync`.
 - Benchmark regression gates переведены на полный CSV-формат suite report; добавлены TypeScript-сценарии `bench:reference`, `bench:perf` и `bench:strace`.
 - Benchmark baseline заменён на exact x86_64 matrix 64 B..8 MiB без `payload_size=0`; default regression gate читает только `rbus_suite_baseline_x86_64.csv`.
-- Benchmark suite получил повторные запуски строк matrix: default `--runs 5`, итоговые performance metrics агрегируются медианой, чтобы одиночный spike не ломал regression gate.
-- Benchmark warmup увеличен до 64 сообщений на publisher и добавлен для ping-pong path; warmup не попадает в `measured_messages`.
-- Benchmark stream depth снова рассчитывается из `warmup + measured + 1`, чтобы прогрев не создавал искусственный `MessagesSkipped`.
-- Benchmark syscall pass выполняется один раз на строку matrix, а не на каждый повтор timing run.
+- Benchmark suite переведён на bench profile build: скрипты собирают `cargo build --profile bench -p rbusd -p rbus-bench` и запускают `target/release/rbus-bench`.
+- Benchmark matrix ограничена топологией 4 publisher-а и 8 subscriber-ов, режимом `busy-poll` и пятью transport modes: `rbus-loaned-metadata-only`, `rbus-loaned-fill`, `rbus-publish-bytes`, `unix-socket`, `unix-socket-end-to-end`.
+- Benchmark readiness переведён с fixed sleep на attach-ready files, measurement-ready files и общий start flag; throughput считается по max worker measured window, а parent wall-clock пишется в `orchestration_wall_time_ns`.
+- Benchmark latency разделена на `transport_latency_*_ns` и `end_to_end_latency_*_ns` с одинаковой timestamp-семантикой для rbus и Unix socket.
+- Benchmark warmup теперь pre-fault/pre-touch всех slots ring-а: publisher прогревает минимум `depth` сообщений вне измеряемого окна, а subscriber вычитывает warmup до start flag.
+- Benchmark message count поднят: default `--messages 100000`, default `--runs 1`, для large payload действует бюджет 512 MiB payload bytes на stream и лимит `depth - 1`, а полный suite имеет hard timeout 20 минут.
+- Benchmark stream depth рассчитывается из message count и payload-size budget, чтобы large payload не создавал чрезмерные SHM segments.
+- Benchmark CSV suite теперь stream-ит header и завершенные строки matrix с flush после каждой строки, чтобы при timeout или gate failure сохранялись уже полученные измерения.
+- Benchmark syscall pass выполняется один раз на строку matrix, а не на каждый повтор timing run, и использует bounded sample до 256 сообщений на publisher при depth до 512.
 - `LoanedMessage` теперь commit-ит себя через `LoanedMessage::publish`; `Publisher::publish(LoanedMessage)` удалён, поэтому loan нельзя передать чужому publisher-у даже до runtime. Добавлены compile-fail doctest и regression test на rollback при `Drop`.
 - Добавлен single-stream fast path для `Subscriber::try_recv`: при одном attached stream-е успешное чтение идёт без `stream_epoch` check, `RefCell<Vec<_>>` borrow и scan; после пустого чтения refresh по `stream_epoch` сохраняет attach новых publisher stream-ов. Добавлен regression test для появления второго publisher-а после пустого fast-path чтения.

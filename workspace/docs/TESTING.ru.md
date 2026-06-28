@@ -19,15 +19,18 @@ syscalls в non-blocking publish/try_recv steady state.
 npm run bench:suite-smoke
 ```
 
-Она запускает `rbus-bench --suite --matrix-smoke --messages 1 --format csv
---no-gate`, поднимает `rbusd`, publisher и subscriber как отдельные процессы и
-проверяет CSV output harness-а.
+Она собирает `rbusd` и `rbus-bench` через `cargo build --profile bench`, запускает
+`target/release/rbus-bench --suite --matrix-smoke --messages 1 --format csv
+--no-gate`, поднимает `rbusd`, 4 publisher-а и 8 subscriber-ов как отдельные
+процессы и проверяет CSV output harness-а. CSV suite stream-ит header и строки
+matrix с flush после каждой строки, поэтому при timeout или gate failure
+сохраняются уже завершенные измерения.
 
 Benchmark regression-профили запускаются отдельными TypeScript-сценариями:
 
 ```bash
-npm run bench:reference -- --messages 32 --runs 5
-npm run bench:perf -- --messages 32 --runs 5
+npm run bench:reference
+npm run bench:perf
 npm run bench:strace
 ```
 
@@ -37,10 +40,15 @@ npm run bench:strace
 совмещает hot-path syscall smoke и короткий suite pass, где
 `syscalls/message` снимается через `strace -c`. Reference CSV хранит thresholds:
 latency `max(2x, +50us)`, throughput 80% от измерения и syscall ceiling
-`1.25x + 16`. Suite по умолчанию делает пять независимых запусков каждой строки и
-берёт медиану latency/throughput/resource metrics, чтобы одиночный spike не
-ломал gate. Syscall pass выполняется один раз на строку matrix. Перед измерением
-каждый worker прогревает transport 64 сообщениями на publisher.
+`1.25x + 16`. Suite по умолчанию делает один запуск каждой строки и имеет hard
+timeout 20 минут: при исчерпании бюджета перед очередным измерением прогон
+завершается `Timeout`. Syscall pass выполняется один раз на строку matrix и
+использует bounded sample: максимум 256 сообщений на publisher и depth до 512.
+Перед измерением worker-ы проходят attach-ready barrier, publisher-ы
+pre-fault/pre-touch ring depth сообщениями, а measured message budget не
+превышает `depth - 1`, чтобы валидный прогон не порождал `MessagesSkipped`.
+Все worker-ы ждут общий start flag и только после этого входят в measured
+window.
 
 Benchmark TypeScript-скрипты не содержат абсолютный container source path:
 корень `workspace/src` вычисляется от расположения файла

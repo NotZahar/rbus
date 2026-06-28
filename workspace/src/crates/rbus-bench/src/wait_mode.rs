@@ -31,12 +31,4 @@ impl WaitMode {
             Self::RecvTimeout => "recv-timeout",
         }
     }
-
-    /// Returns a value
-    pub const fn uses_blocking_wait(self) -> bool {
-        match self {
-            Self::BusyPoll => false,
-            Self::Recv | Self::RecvTimeout => true,
-        }
-    }
 }

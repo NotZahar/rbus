@@ -3,14 +3,8 @@
 pub enum ScenarioKind {
     /// One-way publish/receive
     OneWay,
-    /// Ping-pong round-trip
-    PingPong,
     /// Warning model metadata
     SlowSubscriber,
-    /// Subscriber runtime metadata
-    CrashSubscriber,
-    /// Publisher runtime metadata
-    CrashPublisher,
 }
 
 /// Benchmark topology
@@ -27,65 +21,9 @@ pub struct Topology {
 }
 
 /// Benchmark metadata
-pub const TOPOLOGIES: &[Topology] = &[
-    Topology {
-        name: "one-publisher-one-subscriber",
-        publisher_count: 1,
-        subscriber_count: 1,
-        kind: ScenarioKind::OneWay,
-    },
-    Topology {
-        name: "one-publisher-two-subscribers",
-        publisher_count: 1,
-        subscriber_count: 2,
-        kind: ScenarioKind::OneWay,
-    },
-    Topology {
-        name: "one-publisher-four-subscribers",
-        publisher_count: 1,
-        subscriber_count: 4,
-        kind: ScenarioKind::OneWay,
-    },
-    Topology {
-        name: "two-publishers-one-subscriber",
-        publisher_count: 2,
-        subscriber_count: 1,
-        kind: ScenarioKind::OneWay,
-    },
-    Topology {
-        name: "four-publishers-one-subscriber",
-        publisher_count: 4,
-        subscriber_count: 1,
-        kind: ScenarioKind::OneWay,
-    },
-    Topology {
-        name: "four-publishers-four-subscribers",
-        publisher_count: 4,
-        subscriber_count: 4,
-        kind: ScenarioKind::OneWay,
-    },
-    Topology {
-        name: "ping-pong-round-trip",
-        publisher_count: 1,
-        subscriber_count: 1,
-        kind: ScenarioKind::PingPong,
-    },
-    Topology {
-        name: "slow-subscriber-gap-detection",
-        publisher_count: 1,
-        subscriber_count: 1,
-        kind: ScenarioKind::SlowSubscriber,
-    },
-    Topology {
-        name: "crash-subscriber-message-ref",
-        publisher_count: 1,
-        subscriber_count: 1,
-        kind: ScenarioKind::CrashSubscriber,
-    },
-    Topology {
-        name: "crash-publisher-stream-lifetime",
-        publisher_count: 1,
-        subscriber_count: 1,
-        kind: ScenarioKind::CrashPublisher,
-    },
-];
+pub const TOPOLOGIES: &[Topology] = &[Topology {
+    name: "four-publishers-eight-subscribers",
+    publisher_count: 4,
+    subscriber_count: 8,
+    kind: ScenarioKind::OneWay,
+}];

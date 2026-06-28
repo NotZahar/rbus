@@ -7,9 +7,9 @@ import { resolve } from "node:path";
 import { workspacePaths } from "./workspace-paths.ts";
 
 const defaultOutputPath = "benches/baselines/rbus_suite_baseline_x86_64.csv";
-const defaultMessages = "32";
-const defaultRuns = "5";
-const csvFieldCount = 30;
+const defaultMessages = "100000";
+const defaultRuns = "1";
+const csvFieldCount = 36;
 const latencyThresholdMultiplier = 2;
 const latencyThresholdPaddingNs = 50_000;
 const throughputThresholdMultiplier = 0.8;
@@ -17,10 +17,10 @@ const syscallThresholdMultiplier = 1.25;
 const syscallThresholdPadding = 16;
 const statusFieldIndex = 0;
 const statusOk = "ok";
-const syscallsPerMessageFieldIndex = 23;
-const throughputMessagesPerSecondFieldIndex = 17;
-const payloadThroughputGibPerSecondFieldIndex = 18;
-const latencyFieldIndices = [8, 9, 10, 11, 12, 13, 14, 15, 16] as const;
+const syscallsPerMessageFieldIndex = 28;
+const throughputMessagesPerSecondFieldIndex = 22;
+const payloadThroughputGibPerSecondFieldIndex = 23;
+const latencyFieldIndices = [8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21] as const;
 
 class ScriptError extends Error {
   readonly exitCode: number;
@@ -103,7 +103,7 @@ function runCommand(command: string, commandArguments: string[], captureStdout: 
 }
 
 function runReference(options: ReferenceOptions) {
-  runCommand("cargo", ["build", "-p", "rbusd", "-p", "rbus-bench"], false);
+  runCommand("cargo", ["build", "--profile", "bench", "-p", "rbusd", "-p", "rbus-bench"], false);
   const suiteArguments = [
     "--suite",
     "--messages",

@@ -12,8 +12,30 @@ pub(crate) fn ready_directory(run_index: usize) -> PathBuf {
     std::env::temp_dir().join(format!("rbus-bench-{}-{run_index}", std::process::id()))
 }
 
-pub(crate) fn ready_file(directory: &Path, index: u8) -> PathBuf {
-    directory.join(format!("subscriber-{index}.ready"))
+pub(crate) fn attach_ready_file(directory: &Path, index: u8) -> PathBuf {
+    named_ready_file(directory, "attach-subscriber", index)
+}
+
+pub(crate) fn worker_ready_file(directory: &Path, role: &str, index: u8) -> PathBuf {
+    named_ready_file(directory, role, index)
+}
+
+pub(crate) fn start_file(directory: &Path) -> PathBuf {
+    directory.join("start.flag")
+}
+
+pub(crate) fn warmup_start_file(directory: &Path) -> PathBuf {
+    directory.join("warmup-start.flag")
+}
+
+pub(crate) fn write_start_file(directory: &Path) -> Result<(), Warning> {
+    std::fs::write(start_file(directory), b"start\n")
+        .map_err(|error| warning_from_io(error, "start_file::write"))
+}
+
+pub(crate) fn write_warmup_start_file(directory: &Path) -> Result<(), Warning> {
+    std::fs::write(warmup_start_file(directory), b"warmup\n")
+        .map_err(|error| warning_from_io(error, "warmup_start_file::write"))
 }
 
 pub(crate) fn create_ready_directory(directory: &Path) -> Result<(), Warning> {
@@ -24,23 +46,12 @@ pub(crate) fn remove_ready_directory(directory: &Path) -> Result<(), Warning> {
     std::fs::remove_dir_all(directory).map_err(|error| warning_from_io(error, "ready_dir::remove"))
 }
 
-pub(crate) fn wait_ready_files(directory: &Path, count: u8) -> Result<(), Warning> {
-    for _attempt in 0..READY_WAIT_ATTEMPTS {
-        if ready_file_count(directory, count) == count {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(READY_WAIT_POLL_INTERVAL_MS));
-    }
-    Err(warning("wait_ready_files::timeout"))
-}
-
-pub(crate) fn wait_ready_files_or_worker_exit(
-    directory: &Path,
-    count: u8,
+pub(crate) fn wait_paths_or_worker_exit(
+    paths: &[PathBuf],
     workers: &mut Vec<Child>,
 ) -> Result<Option<Child>, Warning> {
     for _attempt in 0..READY_WAIT_ATTEMPTS {
-        if ready_file_count(directory, count) == count {
+        if paths.iter().all(|path| path.exists()) {
             return Ok(None);
         }
         if let Some(worker_index) = exited_worker_index(workers)? {
@@ -48,17 +59,11 @@ pub(crate) fn wait_ready_files_or_worker_exit(
         }
         std::thread::sleep(Duration::from_millis(READY_WAIT_POLL_INTERVAL_MS));
     }
-    Err(warning("wait_ready_files::timeout"))
+    Err(warning("wait_paths::timeout"))
 }
 
-fn ready_file_count(directory: &Path, count: u8) -> u8 {
-    let mut ready_count = 0_u8;
-    for index in 0..count {
-        if ready_file(directory, index).exists() {
-            ready_count = ready_count.saturating_add(1);
-        }
-    }
-    ready_count
+fn named_ready_file(directory: &Path, prefix: &str, index: u8) -> PathBuf {
+    directory.join(format!("{prefix}-{index}.ready"))
 }
 
 fn exited_worker_index(workers: &mut [Child]) -> Result<Option<usize>, Warning> {

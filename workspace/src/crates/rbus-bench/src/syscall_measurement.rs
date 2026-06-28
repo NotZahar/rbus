@@ -1,5 +1,7 @@
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Output, Stdio};
+use std::thread::JoinHandle;
 use std::time::Duration;
 
 use rbus_core::warning::{Warning, WarningCode};
@@ -17,6 +19,8 @@ const STRACE_BINARY: &str = "strace";
 const STRACE_CALLS_FIELD_INDEX: usize = 3;
 const STRACE_MINIMUM_FIELD_COUNT: usize = 5;
 const SYSCALL_DOMAIN_PREFIX: &str = "rbus-suite-syscalls";
+const SYSCALL_MAX_DEPTH: usize = 512;
+const SYSCALL_MAX_MESSAGES_PER_PUBLISHER: u32 = 256;
 const TRACE_FILE_EXTENSION: &str = "strace-summary";
 const WORKER_TIMEOUT_MS: u64 = 300_000;
 const READY_WAIT_ATTEMPTS: usize = (WORKER_TIMEOUT_MS / READY_WAIT_POLL_INTERVAL_MS) as usize;
@@ -38,6 +42,7 @@ pub(crate) fn measure_syscalls_per_message(
     if context.transport.is_rbus() && context.wait_mode == WaitMode::BusyPoll {
         return Ok(RBUS_BUSY_POLL_SYSCALLS_PER_MESSAGE);
     }
+    let context = syscall_sample_context(context);
     let domain = format!(
         "{SYSCALL_DOMAIN_PREFIX}-{}-{}",
         std::process::id(),
@@ -61,91 +66,81 @@ pub(crate) fn measure_syscalls_per_message(
     };
     let syscall_count = match context.topology.kind {
         ScenarioKind::OneWay | ScenarioKind::SlowSubscriber => run_one_way(run)?,
-        ScenarioKind::PingPong => run_ping_pong(run)?,
-        ScenarioKind::CrashSubscriber => run_crash_subscriber(run)?,
-        ScenarioKind::CrashPublisher => run_crash_publisher(run)?,
     };
     remove_ready_directory(&ready_directory)?;
     Ok(syscall_count as f64 / measured_messages(context) as f64)
 }
 
+fn syscall_sample_context(context: SyscallMeasurementContext) -> SyscallMeasurementContext {
+    let depth = context.depth.min(SYSCALL_MAX_DEPTH);
+    let depth_limited_messages = depth.saturating_sub(1).min(u32::MAX as usize) as u32;
+    SyscallMeasurementContext {
+        depth,
+        messages_per_publisher: context
+            .messages_per_publisher
+            .min(SYSCALL_MAX_MESSAGES_PER_PUBLISHER)
+            .min(depth_limited_messages),
+        ..context
+    }
+}
+
 fn run_one_way(context: SyscallRunContext<'_>) -> Result<u64, Warning> {
     let mut subscribers = Vec::new();
+    let mut attach_ready_files = Vec::new();
+    let mut worker_ready_files = Vec::new();
     for subscriber_index in 0..context.measurement.topology.subscriber_count {
-        let ready_file = ready_file(context.ready_directory, subscriber_index);
+        let attach_ready_file = attach_ready_file(context.ready_directory, subscriber_index);
+        let ready_file = worker_ready_file(
+            context.ready_directory,
+            WorkerRole::Subscriber,
+            subscriber_index,
+        );
+        attach_ready_files.push(attach_ready_file.clone());
+        worker_ready_files.push(ready_file.clone());
         subscribers.push(spawn_worker(
             worker_arguments(
                 context,
                 WorkerRole::Subscriber,
                 subscriber_index,
                 Some(&ready_file),
+                Some(&attach_ready_file),
             ),
             trace_file(context, WorkerRole::Subscriber, subscriber_index),
         )?);
     }
-    wait_ready_files_or_workers(
-        context.ready_directory,
-        context.measurement.topology.subscriber_count,
-        &mut subscribers,
-    )?;
+    wait_paths_or_workers(&attach_ready_files, &mut subscribers)?;
     let mut publishers = Vec::new();
+    let mut publisher_attach_ready_files = Vec::new();
     for publisher_index in 0..context.measurement.topology.publisher_count {
+        let ready_file = worker_ready_file(
+            context.ready_directory,
+            WorkerRole::Publisher,
+            publisher_index,
+        );
+        let attach_ready_file = context
+            .ready_directory
+            .join(format!("attach-publisher-{publisher_index}.ready"));
+        publisher_attach_ready_files.push(attach_ready_file.clone());
+        worker_ready_files.push(ready_file.clone());
         publishers.push(spawn_worker(
-            worker_arguments(context, WorkerRole::Publisher, publisher_index, None),
+            worker_arguments(
+                context,
+                WorkerRole::Publisher,
+                publisher_index,
+                Some(&ready_file),
+                Some(&attach_ready_file),
+            ),
             trace_file(context, WorkerRole::Publisher, publisher_index),
         )?);
     }
-    wait_for_workers(publishers, false)?
-        .checked_add(wait_for_workers(subscribers, false)?)
-        .ok_or_else(|| warning("run_one_way::overflow"))
-}
-
-fn run_ping_pong(context: SyscallRunContext<'_>) -> Result<u64, Warning> {
-    let ready_file = ready_file(context.ready_directory, 0);
-    let responder = spawn_worker(
-        worker_arguments(context, WorkerRole::PingResponder, 0, Some(&ready_file)),
-        trace_file(context, WorkerRole::PingResponder, 0),
-    )?;
-    wait_ready_files(context.ready_directory, 1)?;
-    let requester = spawn_worker(
-        worker_arguments(context, WorkerRole::PingRequester, 0, None),
-        trace_file(context, WorkerRole::PingRequester, 0),
-    )?;
-    wait_for_worker(requester, false)?
-        .checked_add(wait_for_worker(responder, false)?)
-        .ok_or_else(|| warning("run_ping_pong::overflow"))
-}
-
-fn run_crash_subscriber(context: SyscallRunContext<'_>) -> Result<u64, Warning> {
-    let ready_file = ready_file(context.ready_directory, 0);
-    let crash_subscriber = spawn_worker(
-        worker_arguments(context, WorkerRole::CrashSubscriber, 0, Some(&ready_file)),
-        trace_file(context, WorkerRole::CrashSubscriber, 0),
-    )?;
-    wait_ready_files(context.ready_directory, 1)?;
-    let publisher = spawn_worker(
-        worker_arguments(context, WorkerRole::Publisher, 0, None),
-        trace_file(context, WorkerRole::Publisher, 0),
-    )?;
-    wait_for_worker(publisher, false)?
-        .checked_add(wait_for_worker(crash_subscriber, true)?)
-        .ok_or_else(|| warning("run_crash_subscriber::overflow"))
-}
-
-fn run_crash_publisher(context: SyscallRunContext<'_>) -> Result<u64, Warning> {
-    let ready_file = ready_file(context.ready_directory, 0);
-    let subscriber = spawn_worker(
-        worker_arguments(context, WorkerRole::Subscriber, 0, Some(&ready_file)),
-        trace_file(context, WorkerRole::Subscriber, 0),
-    )?;
-    wait_ready_files(context.ready_directory, 1)?;
-    let crash_publisher = spawn_worker(
-        worker_arguments(context, WorkerRole::CrashPublisher, 0, None),
-        trace_file(context, WorkerRole::CrashPublisher, 0),
-    )?;
-    wait_for_worker(crash_publisher, true)?
-        .checked_add(wait_for_worker(subscriber, false)?)
-        .ok_or_else(|| warning("run_crash_publisher::overflow"))
+    wait_paths_or_workers(&publisher_attach_ready_files, &mut publishers)?;
+    write_warmup_start_file(context.ready_directory)?;
+    let mut workers = Vec::new();
+    workers.append(&mut publishers);
+    workers.append(&mut subscribers);
+    wait_paths_or_workers(&worker_ready_files, &mut workers)?;
+    write_start_file(context.ready_directory)?;
+    wait_for_workers(workers, false)
 }
 
 fn worker_arguments(
@@ -153,6 +148,7 @@ fn worker_arguments(
     role: WorkerRole,
     worker_index: u8,
     ready_file: Option<&Path>,
+    attach_ready_file: Option<&Path>,
 ) -> Vec<String> {
     let mut arguments = vec![
         String::from("--suite-worker"),
@@ -189,6 +185,18 @@ fn worker_arguments(
         arguments.push(String::from("--ready-file"));
         arguments.push(path.display().to_string());
     }
+    if let Some(path) = attach_ready_file {
+        arguments.push(String::from("--attach-ready-file"));
+        arguments.push(path.display().to_string());
+    }
+    arguments.push(String::from("--start-file"));
+    arguments.push(start_file(context.ready_directory).display().to_string());
+    arguments.push(String::from("--warmup-start-file"));
+    arguments.push(
+        warmup_start_file(context.ready_directory)
+            .display()
+            .to_string(),
+    );
     arguments
 }
 
@@ -217,15 +225,16 @@ fn wait_for_workers(workers: Vec<TracedWorker>, allow_failure: bool) -> Result<u
 }
 
 fn wait_for_worker(mut worker: TracedWorker, allow_failure: bool) -> Result<u64, Warning> {
+    let stdout_reader = worker.child.stdout.take().map(spawn_pipe_reader);
+    let stderr_reader = worker.child.stderr.take().map(spawn_pipe_reader);
     let started_at = crate::system_metrics::monotonic_time_ns()?;
-    loop {
-        if worker
+    let status = loop {
+        if let Some(status) = worker
             .child
             .try_wait()
             .map_err(|error| warning_from_io(error, "wait_for_worker::try_wait"))?
-            .is_some()
         {
-            break;
+            break status;
         }
         if crate::system_metrics::monotonic_time_ns()?.saturating_sub(started_at)
             > Duration::from_millis(WORKER_TIMEOUT_MS).as_nanos() as u64
@@ -234,19 +243,52 @@ fn wait_for_worker(mut worker: TracedWorker, allow_failure: bool) -> Result<u64,
                 .child
                 .kill()
                 .map_err(|error| warning_from_io(error, "wait_for_worker::kill"))?;
+            worker
+                .child
+                .wait()
+                .map_err(|error| warning_from_io(error, "wait_for_worker::wait_after_kill"))?;
+            let _stdout = join_pipe_reader(stdout_reader, "wait_for_worker::stdout_after_kill")?;
+            let _stderr = join_pipe_reader(stderr_reader, "wait_for_worker::stderr_after_kill")?;
             return Err(warning("wait_for_worker::timeout"));
         }
         std::thread::sleep(Duration::from_millis(READY_WAIT_POLL_INTERVAL_MS));
-    }
-    let output = worker
-        .child
-        .wait_with_output()
-        .map_err(|error| warning_from_io(error, "wait_for_worker::output"))?;
+    };
+    let stdout = join_pipe_reader(stdout_reader, "wait_for_worker::stdout")?;
+    let stderr = join_pipe_reader(stderr_reader, "wait_for_worker::stderr")?;
+    let output = Output {
+        status,
+        stdout,
+        stderr,
+    };
     validate_worker_output(&output, allow_failure)?;
     let syscall_count = parse_strace_summary(&worker.trace_path)?;
     std::fs::remove_file(&worker.trace_path)
         .map_err(|error| warning_from_io(error, "trace_file::remove"))?;
     Ok(syscall_count)
+}
+
+fn spawn_pipe_reader<Pipe>(mut pipe: Pipe) -> JoinHandle<Result<Vec<u8>, std::io::Error>>
+where
+    Pipe: Read + Send + 'static,
+{
+    std::thread::spawn(move || {
+        let mut output = Vec::new();
+        pipe.read_to_end(&mut output)?;
+        Ok(output)
+    })
+}
+
+fn join_pipe_reader(
+    reader: Option<JoinHandle<Result<Vec<u8>, std::io::Error>>>,
+    operation: &'static str,
+) -> Result<Vec<u8>, Warning> {
+    match reader {
+        Some(reader) => reader
+            .join()
+            .map_err(|_| warning(operation))?
+            .map_err(|error| warning_from_io(error, operation)),
+        None => Ok(Vec::new()),
+    }
 }
 
 fn validate_worker_output(output: &Output, allow_failure: bool) -> Result<(), Warning> {
@@ -335,10 +377,6 @@ fn is_percent_field(value: &str) -> bool {
 
 fn measured_messages(context: SyscallMeasurementContext) -> u64 {
     match context.topology.kind {
-        ScenarioKind::PingPong => u64::from(context.messages_per_publisher),
-        ScenarioKind::CrashSubscriber | ScenarioKind::CrashPublisher => {
-            u64::from(context.messages_per_publisher)
-        }
         ScenarioKind::OneWay | ScenarioKind::SlowSubscriber => {
             u64::from(context.topology.publisher_count)
                 * u64::from(context.topology.subscriber_count)
@@ -347,45 +385,22 @@ fn measured_messages(context: SyscallMeasurementContext) -> u64 {
     }
 }
 
-fn wait_ready_files(directory: &Path, count: u8) -> Result<(), Warning> {
-    for _attempt in 0..READY_WAIT_ATTEMPTS {
-        let mut ready_count = 0_u8;
-        for index in 0..count {
-            if ready_file(directory, index).exists() {
-                ready_count = ready_count.saturating_add(1);
-            }
-        }
-        if ready_count == count {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(READY_WAIT_POLL_INTERVAL_MS));
-    }
-    Err(warning("wait_ready_files::timeout"))
-}
-
-fn wait_ready_files_or_workers(
-    directory: &Path,
-    count: u8,
+fn wait_paths_or_workers(
+    paths: &[PathBuf],
     workers: &mut Vec<TracedWorker>,
 ) -> Result<(), Warning> {
     for _attempt in 0..READY_WAIT_ATTEMPTS {
-        let mut ready_count = 0_u8;
-        for index in 0..count {
-            if ready_file(directory, index).exists() {
-                ready_count = ready_count.saturating_add(1);
-            }
-        }
-        if ready_count == count {
+        if paths.iter().all(|path| path.exists()) {
             return Ok(());
         }
         if let Some(worker_index) = exited_worker_index(workers)? {
             let worker = workers.remove(worker_index);
             let _syscalls = wait_for_worker(worker, false)?;
-            return Err(warning("wait_ready_files::worker_exit"));
+            return Err(warning("wait_paths::worker_exit"));
         }
         std::thread::sleep(Duration::from_millis(READY_WAIT_POLL_INTERVAL_MS));
     }
-    Err(warning("wait_ready_files::timeout"))
+    Err(warning("wait_paths::timeout"))
 }
 
 fn exited_worker_index(workers: &mut [TracedWorker]) -> Result<Option<usize>, Warning> {
@@ -409,8 +424,30 @@ fn ready_directory(run_index: usize) -> PathBuf {
     ))
 }
 
-fn ready_file(directory: &Path, index: u8) -> PathBuf {
-    directory.join(format!("subscriber-{index}.ready"))
+fn attach_ready_file(directory: &Path, index: u8) -> PathBuf {
+    directory.join(format!("attach-subscriber-{index}.ready"))
+}
+
+fn worker_ready_file(directory: &Path, role: WorkerRole, index: u8) -> PathBuf {
+    directory.join(format!("{}-{index}.ready", role.as_str()))
+}
+
+fn start_file(directory: &Path) -> PathBuf {
+    directory.join("start.flag")
+}
+
+fn warmup_start_file(directory: &Path) -> PathBuf {
+    directory.join("warmup-start.flag")
+}
+
+fn write_start_file(directory: &Path) -> Result<(), Warning> {
+    std::fs::write(start_file(directory), b"start\n")
+        .map_err(|error| warning_from_io(error, "start_file::write"))
+}
+
+fn write_warmup_start_file(directory: &Path) -> Result<(), Warning> {
+    std::fs::write(warmup_start_file(directory), b"warmup\n")
+        .map_err(|error| warning_from_io(error, "warmup_start_file::write"))
 }
 
 fn trace_file(context: SyscallRunContext<'_>, role: WorkerRole, worker_index: u8) -> PathBuf {

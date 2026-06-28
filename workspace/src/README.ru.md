@@ -29,16 +29,21 @@ npm run fmt
 npm run clippy
 npm run test
 npm run bench:smoke
-npm run bench:reference -- --messages 4
-npm run bench:perf -- --messages 4
+npm run bench:reference
+npm run bench:perf
 npm run bench:strace
 npm run hot-path:syscalls
 ```
 
 `bench:reference` и `bench:perf` по умолчанию используют x86_64 baseline
-`benches/baselines/rbus_suite_baseline_x86_64.csv` и делают пять независимых
-запуска каждой строки benchmark matrix. Перед измерением каждый worker
-прогревает transport 64 сообщениями на publisher.
+`benches/baselines/rbus_suite_baseline_x86_64.csv`, собирают `rbusd` и
+`rbus-bench` через `cargo build --profile bench` и запускают
+`target/release/rbus-bench`. Benchmark matrix использует топологию 4 publisher-а и
+8 subscriber-ов, пять transport-режимов и adaptive message count: small payload
+получает до 100000 сообщений на publisher, large payload ограничивается
+бюджетом 512 MiB payload bytes на stream и лимитом `depth - 1`. Полный suite
+имеет hard timeout 20 минут и завершает прогон ошибкой `Timeout`, если бюджет
+исчерпан перед очередным измерением.
 
 ## Daemon и CLI
 
