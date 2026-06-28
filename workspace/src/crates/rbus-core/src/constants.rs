@@ -7,7 +7,7 @@ pub const RBUS_API_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const STREAM_SEGMENT_MAGIC: u64 = 0x5242_5553_5348_4d31;
 
 /// Stream segment ABI metadata
-pub const STREAM_SEGMENT_ABI_VERSION: u32 = 4;
+pub const STREAM_SEGMENT_ABI_VERSION: u32 = 5;
 
 /// Stream segment ABI metadata
 pub const SHARED_MEMORY_MAGIC: u64 = STREAM_SEGMENT_MAGIC;

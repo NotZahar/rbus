@@ -1,5 +1,6 @@
 //! Read-only message reference
 use core::marker::PhantomData;
+use core::ptr::NonNull;
 
 use rbus_core::Sequence;
 
@@ -8,7 +9,7 @@ use crate::subscriber::Subscriber;
 
 /// Stream runtime metadata
 pub struct MessageRef<'subscriber> {
-    stream: std::sync::Arc<StreamInner>,
+    stream: NonNull<StreamInner>,
     slot_index: usize,
     reader_bit: u64,
     sequence: Sequence,
@@ -19,7 +20,10 @@ pub struct MessageRef<'subscriber> {
 }
 
 impl<'subscriber> MessageRef<'subscriber> {
-    pub(crate) fn from_reservation(read_reservation: ReadReservation) -> Self {
+    pub(crate) fn from_reservation(
+        _subscriber: &'subscriber Subscriber,
+        read_reservation: ReadReservation<'_>,
+    ) -> Self {
         Self {
             stream: read_reservation.stream,
             slot_index: read_reservation.slot_index,
@@ -34,12 +38,8 @@ impl<'subscriber> MessageRef<'subscriber> {
 
     /// Payload metadata
     pub fn as_slice(&self) -> &[u8] {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - loaned_publish_makes_payload_visible_to_subscriber
+        // SAFETY: ReadReservation pins the slot until MessageRef::drop, and Subscriber keeps
+        // the mapped stream alive for the whole 'subscriber lifetime.
         unsafe { core::slice::from_raw_parts(self.payload_pointer, self.length) }
     }
 
@@ -56,6 +56,11 @@ impl<'subscriber> MessageRef<'subscriber> {
 
 impl Drop for MessageRef<'_> {
     fn drop(&mut self) {
-        self.stream.unpin_reader(self.slot_index, self.reader_bit);
+        // SAFETY: Subscriber keeps attached stream Arcs alive while MessageRef<'subscriber> exists.
+        unsafe {
+            self.stream
+                .as_ref()
+                .unpin_reader(self.slot_index, self.reader_bit);
+        }
     }
 }

@@ -33,7 +33,7 @@ fn run() -> ExampleResult<()> {
     let hold_duration = arguments.required_duration_millis(HOLD_MILLISECONDS_ARGUMENT)?;
 
     let bus = Bus::connect(&domain)?;
-    let publisher = bus.publisher(&topic, TopicConfig::new(max_message_size, depth))?;
+    let mut publisher = bus.publisher(&topic, TopicConfig::new(max_message_size, depth))?;
     let sequence = publisher.publish_bytes(payload.as_bytes())?;
     print_line(&format!(
         "published sequence={} bytes={}",

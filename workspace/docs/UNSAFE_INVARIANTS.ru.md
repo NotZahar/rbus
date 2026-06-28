@@ -4,7 +4,7 @@ Unsafe допускается только в низкоуровневых ме�
 payload slots, `SCM_RIGHTS` ancillary data, futex syscall boundary и lifetime
 binding `LoanedMessage`/`MessageRef`.
 
-Каждый unsafe-блок должен иметь комментарий `SAFETY` на русском языке с инвариантами
+Каждый unsafe-блок должен иметь комментарий `SAFETY` на английском языке с инвариантами
 и ссылками на тесты.
 
 Проверенные зоны:
@@ -36,3 +36,12 @@ binding `LoanedMessage`/`MessageRef`.
   `stream_initializes_shared_memory_segment_header`,
   `loaned_publish_makes_payload_visible_to_subscriber` и
   `message_ref_drop_releases_pinned_slot`.
+- `rbus::LoanedMessage`: mutable borrow `Publisher` удерживает attached
+  stream живым и запрещает второй outstanding loan на этапе компиляции; raw
+  payload pointer используется только в пределах reserved slot-а; regression
+  закреплена doctest-ом `cannot_start_second_loan_before_first_is_finished`.
+- `rbus::MessageRef`: pointer на `StreamInner` берётся из attached stream-а,
+  которым `Subscriber` владеет через `Arc`; stream-и не удаляются из subscriber
+  set, пока жив сам `Subscriber`, поэтому `MessageRef<'subscriber>` может
+  освобождать reader bit через pointer без per-message `Arc::clone`. Регрессия
+  закреплена тестом `message_reservations_do_not_clone_stream_arc`.

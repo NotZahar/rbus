@@ -1,62 +1,77 @@
 //! Internal documentation
 
-use core::marker::PhantomData;
-
 use rbus_core::Sequence;
+use rbus_core::warning::Warning;
 
 use crate::publisher::Publisher;
 use crate::stream::LoanReservation;
-use crate::stream::StreamInner;
 
 /// Stream runtime metadata
 pub struct LoanedMessage<'publisher> {
-    pub(crate) stream: std::sync::Arc<StreamInner>,
-    pub(crate) publisher_id: rbus_core::ids::PublisherId,
+    pub(crate) publisher: &'publisher mut Publisher,
     pub(crate) slot_index: usize,
     pub(crate) sequence: Sequence,
     pub(crate) length: usize,
     pub(crate) payload_pointer: *mut u8,
     pub(crate) published: bool,
-    pub(crate) publisher_lifetime: PhantomData<&'publisher Publisher>,
 }
 
 impl<'publisher> LoanedMessage<'publisher> {
     pub(crate) fn from_reservation(
-        publisher: &'publisher Publisher,
+        publisher: &'publisher mut Publisher,
         reservation: LoanReservation,
     ) -> Self {
         Self {
-            publisher_id: publisher.publisher_id(),
-            stream: reservation.stream,
+            publisher,
             slot_index: reservation.slot_index,
             sequence: reservation.sequence,
             length: reservation.length,
             payload_pointer: reservation.payload_pointer,
             published: false,
-            publisher_lifetime: PhantomData,
         }
     }
 
     /// Payload metadata
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - loaned_publish_makes_payload_visible_to_subscriber
+        // SAFETY: LoanReservation points into a claimed slot, length was validated against the
+        // slot size, and the &mut Publisher borrow prevents another loan from aliasing it.
         unsafe { core::slice::from_raw_parts_mut(self.payload_pointer, self.length) }
     }
 
     pub(crate) fn mark_published(&mut self) {
         self.published = true;
     }
+
+    /// Commits this loaned message to the publisher stream it came from.
+    ///
+    /// ```compile_fail
+    /// use rbus::{Bus, TopicConfig};
+    ///
+    /// fn cannot_start_second_loan_before_first_is_finished(bus: &Bus) -> rbus::RbusResult<()> {
+    ///     let mut publisher = bus.publisher("/typed/loan", TopicConfig::new(8, 4))?;
+    ///     let first_message = publisher.loan(1)?;
+    ///     let second_message = publisher.loan(1)?;
+    ///     drop(first_message);
+    ///     drop(second_message);
+    ///     Ok(())
+    /// }
+    /// ```
+    pub fn publish(mut self) -> Result<Sequence, Warning> {
+        let sequence = self.sequence;
+        let commit_result = self
+            .publisher
+            .commit_loan(self.slot_index, self.sequence, self.length);
+        self.mark_published();
+        commit_result?;
+        self.publisher.wake_waiters()?;
+        Ok(sequence)
+    }
 }
 
 impl Drop for LoanedMessage<'_> {
     fn drop(&mut self) {
         if !self.published {
-            self.stream.rollback_loan(self.slot_index);
+            self.publisher.rollback_loan(self.slot_index);
         }
     }
 }

@@ -43,6 +43,21 @@ subscriber держат отдельную persistent control session откры
 `mmap MAP_SHARED` segment-е. Offsets, `SegmentHeader`, `StreamCounters` и
 `SlotHeader` берутся из `rbus-core`, поэтому publish/recv path не имеет
 отдельного heap-only layout и работает между разными process-ами.
+`Publisher` и `Subscriber` владеют attached stream-ами через `Arc<StreamInner>`
+только на lifetime объекта API. Per-message RAII-объекты не владеют `Arc`:
+`LoanedMessage` хранит `&mut Publisher`, а `MessageRef` хранит pointer,
+привязанный lifetime-ом к `Subscriber`. Это убирает atomic refcount inc/dec из
+каждого `loan` и успешного `try_recv`. Один outstanding loan на publisher
+выражен mutable borrow-ом: runtime `AtomicBool` guard отсутствует. `Publisher`
+намеренно не `Sync`; для параллельной публикации используются отдельные
+publisher instances.
+`StreamCounters` в stream segment ABI `5` разнесён по cache-line cells:
+publisher-owned, subscriber-owned и warning counters не делят одну line, поэтому
+steady-state publish/receive не гоняет одну cache line между ядрами.
+Reader pin оптимизирован под uncontended path: один CAS из пустого mask-а,
+multi-reader fallback остаётся только для реально занятых slot-ов. Writer claim
+после commit/rollback очищается store-ом, а `published_messages` обновляется
+single-writer store-ом без shared counter RMW.
 
 В workspace включены `warnings = "deny"` и `dead_code = "deny"`. Неиспользуемые
 placeholder-модули запрещены: модуль либо участвует в текущем срезе, либо не

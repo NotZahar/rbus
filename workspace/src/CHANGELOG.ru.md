@@ -4,7 +4,7 @@
 
 - Создан workspace проекта.
 - Зафиксирован Rust toolchain: `1.96.0`.
-- Stream segment ABI version: `4`.
+- Stream segment ABI version: `5`.
 - Topic wait segment ABI version: `1`.
 - Control protocol version: `2`.
 - Добавлена warning-only модель и начальная структура crates.
@@ -33,9 +33,14 @@
 - Добавлены fork/kill tests для crash subscriber с удержанным `MessageRef`, crash publisher и restart `rbusd` без остановки существующего data plane.
 - Добавлен re-register после restart `rbusd`: publisher повторно отдаёт старые stream/topic-wait FD новому daemon-у, subscriber получает новый `subscriber_id` вне hot path, а новый subscriber после restart-а может attach-иться к старому publisher stream.
 - Добавлен custom allocator regression test, доказывающий 0 heap allocations для zero-copy `loan` + `publish`, `try_recv` с сообщением и `try_recv` без сообщения.
+- Убран per-message `Arc::clone` из `LoanedMessage`/`MessageRef`: loan/read reservation теперь используют borrowed reference или lifetime-bound pointer, а regression test проверяет неизменность `Arc::strong_count`.
+- `StreamCounters` разнесены по отдельным cache line: publisher, subscriber и warning counters больше не делят одну line в hot path; stream segment ABI поднят до `5`.
+- Reader pin получил uncontended fast path `0 -> reader_bit`, multi-reader fallback сохранён; writer claim на commit/rollback очищается store-ом без RMW, а `published_messages` обновляется single-writer store-ом.
+- `loan_in_progress: AtomicBool` удалён: `Publisher::loan` и `Publisher::publish_bytes` теперь требуют `&mut self`, `LoanedMessage` удерживает `&mut Publisher`, второй outstanding loan не компилируется, а `Publisher` намеренно не является `Sync`.
 - Benchmark regression gates переведены на полный CSV-формат suite report; добавлены TypeScript-сценарии `bench:reference`, `bench:perf` и `bench:strace`.
 - Benchmark baseline заменён на exact x86_64 matrix 64 B..8 MiB без `payload_size=0`; default regression gate читает только `rbus_suite_baseline_x86_64.csv`.
 - Benchmark suite получил повторные запуски строк matrix: default `--runs 5`, итоговые performance metrics агрегируются медианой, чтобы одиночный spike не ломал regression gate.
 - Benchmark warmup увеличен до 64 сообщений на publisher и добавлен для ping-pong path; warmup не попадает в `measured_messages`.
 - Benchmark stream depth снова рассчитывается из `warmup + measured + 1`, чтобы прогрев не создавал искусственный `MessagesSkipped`.
 - Benchmark syscall pass выполняется один раз на строку matrix, а не на каждый повтор timing run.
+- `LoanedMessage` теперь commit-ит себя через `LoanedMessage::publish`; `Publisher::publish(LoanedMessage)` удалён, поэтому loan нельзя передать чужому publisher-у даже до runtime. Добавлены compile-fail doctest и regression test на rollback при `Drop`.

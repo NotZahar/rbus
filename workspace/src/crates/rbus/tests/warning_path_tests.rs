@@ -31,7 +31,7 @@ fn invalid_config_warning_path_preserves_empty_runtime_state() {
 fn message_too_large_warning_path_increments_total_only() {
     let daemon = common::DaemonProcess::start("warning-large");
     let bus = Bus::connect(&daemon.domain).expect("domain should connect");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(
             "/warning/large",
             TopicConfig::new(TEST_SLOT_SIZE, TEST_DEPTH),
@@ -59,7 +59,7 @@ fn backpressure_warning_path_increments_backpressure_counter() {
     let subscriber = bus
         .subscriber("/warning/backpressure")
         .expect("subscriber operation should succeed");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(
             "/warning/backpressure",
             TopicConfig::new(TEST_SLOT_SIZE, SINGLE_SLOT_DEPTH),
@@ -103,7 +103,7 @@ fn messages_skipped_warning_path_updates_cursor_and_counters() {
     let subscriber = bus
         .subscriber(GAP_TOPIC)
         .expect("subscriber operation should succeed");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(GAP_TOPIC, TopicConfig::new(GAP_SLOT_SIZE, GAP_DEPTH))
         .expect("publisher operation should succeed");
 
@@ -137,37 +137,4 @@ fn messages_skipped_warning_path_updates_cursor_and_counters() {
         message.sequence(),
         Sequence::new(GAP_FIRST_AVAILABLE_SEQUENCE)
     );
-}
-
-#[test]
-fn internal_invariant_warning_path_rolls_back_foreign_loan() {
-    let daemon = common::DaemonProcess::start("warning-invariant");
-    let bus = Bus::connect(&daemon.domain).expect("domain should connect");
-    let first_publisher = bus
-        .publisher(
-            "/warning/invariant",
-            TopicConfig::new(TEST_SLOT_SIZE, TEST_DEPTH),
-        )
-        .expect("publisher operation should succeed");
-    let second_publisher = bus
-        .publisher(
-            "/warning/invariant",
-            TopicConfig::new(TEST_SLOT_SIZE, TEST_DEPTH),
-        )
-        .expect("publisher operation should succeed");
-    let loan = first_publisher
-        .loan(PINNED_PAYLOAD.len())
-        .expect("loan should succeed");
-
-    let warning = match second_publisher.publish(loan) {
-        Ok(_) => panic!("operation should return warning"),
-        Err(warning) => warning,
-    };
-
-    assert_eq!(warning.code(), WarningCode::InternalInvariantWarning);
-    assert_eq!(first_publisher.stats().current_sequence, 0);
-    first_publisher
-        .publish_bytes(PINNED_PAYLOAD)
-        .expect("rollback should release the original stream");
-    assert_eq!(first_publisher.stats().published_messages, 1);
 }

@@ -51,6 +51,10 @@ registry fallback отсутствует. Publisher получает stream meta
 daemon-а, subscriber получает `subscriber_id` и attach-ит streams через
 `SCM_RIGHTS`. Payload после setup идёт только через shared memory, не через
 daemon.
+`LoanedMessage` и `MessageRef` не клонируют `Arc<StreamInner>` на каждое
+сообщение: `LoanedMessage` удерживает mutable borrow `Publisher`, а
+`MessageRef` хранит lifetime-bound pointer на уже attached stream. Второй
+outstanding loan запрещается типами, без `AtomicBool` на hot path.
 
 CLI-команды `list`, `stats`, `warnings`, `inspect`, `cleanup` и `doctor`
 обращаются к `rbusd`. Если daemon недоступен, команда завершается warning-ом
@@ -88,12 +92,12 @@ use rbus::{Bus, TopicConfig};
 
 # fn main() -> rbus::RbusResult<()> {
 let bus = Bus::connect("default")?;
-let publisher = bus.publisher("/camera/front/image", TopicConfig::new(4096, 64))?;
+let mut publisher = bus.publisher("/camera/front/image", TopicConfig::new(4096, 64))?;
 let subscriber = bus.subscriber("/camera/front/image")?;
 
 let mut message = publisher.loan(4)?;
 message.as_mut_slice().copy_from_slice(&[1, 2, 3, 4]);
-publisher.publish(message)?;
+message.publish()?;
 
 if let Some(message) = subscriber.try_recv()? {
     let bytes = message.as_slice();

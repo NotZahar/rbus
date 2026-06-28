@@ -8,7 +8,7 @@
 4. `PayloadSlot[depth]`
 
 Актуальные номера контрактов перечислены в
-[Версии API/ABI](VERSIONS.ru.md): stream segment ABI сейчас `4`, topic wait
+[Версии API/ABI](VERSIONS.ru.md): stream segment ABI сейчас `5`, topic wait
 segment ABI сейчас `1`.
 
 `state_seq` кодирует sequence и writing bit: committed state хранит `sequence << 1`,
@@ -29,6 +29,14 @@ snapshot через `MessageRef::timestamp_ns()`.
 claim bit, затем переводит `state_seq` в writing state. Claim bit удерживается
 до commit или rollback, поэтому reader не может закрепиться за slot-ом, пока
 publisher получил mutable payload.
+Один outstanding loan на `Publisher` не хранится в shared memory и не защищается
+runtime `AtomicBool`: `LoanedMessage` удерживает `&mut Publisher`, поэтому второй
+loan на том же publisher-е не проходит borrow checker.
+На commit/rollback writer снимает claim release-store-ом `0`, а не RMW-операцией:
+при удержанном writer claim reader не может успешно добавить reader bit. Reader
+pin сначала пробует uncontended CAS `0 -> reader_bit`; если другой reader уже
+держит slot, включается fallback CAS-loop, который добавляет bit без потери
+fan-out для нескольких subscribers.
 
 `SegmentHeader.flags` является `AtomicU64`. Начиная со stream segment ABI `2`
 bit `SEGMENT_FLAG_CLOSED` помечает stream закрытым после смерти publisher-а или
@@ -47,6 +55,15 @@ reserved }`. `wake_epoch` меняется при publish и stream-added wake �
 publisher stream-а. Этот segment создаётся daemon-ом на topic, передаётся
 publisher/subscriber через `SCM_RIGHTS` и mmap-ится `MAP_SHARED`. При attach
 проверяются `magic` и `abi_version`; mismatch завершает operation без fallback-а.
+
+В stream segment ABI `5` каждый write-heavy counter внутри `StreamCounters`
+занимает отдельную cache line. `published_messages` пишет publisher,
+`received_messages` пишет subscriber, а warning/backpressure/gap counters не
+лежат рядом с ними. Это убирает false sharing между publisher и subscriber
+ядрами при каждом сообщении.
+`published_messages` обновляется одним writer-ом через локальный monotonic cache
+и atomic store в shared counter. `received_messages` остаётся atomic RMW, потому
+что его могут одновременно обновлять несколько subscribers одного stream-а.
 
 Cleanup умершего subscriber-а выполняется вне hot path: `rbusd` mmap-ит
 daemon-owned FD stream-а и очищает bit этого `subscriber_id` во всех

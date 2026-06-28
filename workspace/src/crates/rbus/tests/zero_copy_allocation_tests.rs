@@ -49,7 +49,7 @@ unsafe impl GlobalAlloc for AllocationCountingAllocator {
 fn zero_copy_hot_path_does_not_allocate() {
     let daemon = common::DaemonProcess::start("zero-copy-allocations");
     let bus = Bus::connect(&daemon.domain).expect("domain should connect");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(TOPIC, TopicConfig::new(MAX_MESSAGE_SIZE, STREAM_DEPTH))
         .expect("publisher operation should succeed");
     let subscriber = bus
@@ -62,7 +62,7 @@ fn zero_copy_hot_path_does_not_allocate() {
             Err(warning) => return Err(warning),
         };
         message.as_mut_slice().copy_from_slice(PAYLOAD);
-        publisher.publish(message)
+        message.publish()
     });
     let sequence = publish_result.expect("publish should succeed");
     assert_eq!(publish_allocation_count, ZERO_ALLOCATIONS);

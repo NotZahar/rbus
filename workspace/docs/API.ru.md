@@ -31,6 +31,11 @@ attach-ит этот FD и дальше публикует payload напрям�
 Publisher держит persistent control session открытой до `Drop`; если process
 умирает, `rbusd` видит EOF control socket-а, помечает stream closed в shared
 memory и удаляет publisher stream из registry.
+`Publisher::loan` и `Publisher::publish_bytes` принимают `&mut self`.
+`LoanedMessage` удерживает mutable borrow этого `Publisher`, поэтому второй
+outstanding loan на том же publisher-е невозможен на этапе компиляции.
+`Publisher` намеренно не `Sync`; параллельные producer threads должны иметь
+отдельные publisher instances.
 
 `Bus::subscriber(topic)` регистрирует subscriber в daemon-е и получает
 `subscriber_id`. Streams topic-а attach-ятся через `ATTACH_STREAMS` и
@@ -67,7 +72,7 @@ Crash publisher-а не инвалидирует уже attached `Subscriber`: s
 - `basic_pub` — публикация payload через `Publisher::publish_bytes`;
 - `basic_sub` — blocking receive одного сообщения через `recv_timeout`;
 - `loaned_pub` — zero-copy loan, запись в `LoanedMessage` и commit через
-  `Publisher::publish`;
+  `LoanedMessage::publish`;
 - `multi_sub` — последовательное чтение нескольких сообщений одного topic-а;
 - `ping_pong` — round-trip из двух process-ов с ролями `server` и `client`;
 - `slow_subscriber` — медленный consumer loop без fallback-ов и без скрытого

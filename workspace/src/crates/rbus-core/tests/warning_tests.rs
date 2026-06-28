@@ -77,3 +77,17 @@ fn cleanup_incomplete_warning_path_preserves_context_state() {
     assert_eq!(warning.os_errno(), Some(TEST_OS_ERRNO));
     assert_eq!(warning.message(), "cleanup incomplete");
 }
+
+#[test]
+fn internal_invariant_warning_path_preserves_context_state() {
+    let warning = Warning::new(
+        WarningCode::InternalInvariantWarning,
+        "rbus-core",
+        "internal_invariant",
+    )
+    .with_sequence(Sequence::new(9));
+
+    assert_eq!(warning.code(), WarningCode::InternalInvariantWarning);
+    assert_eq!(warning.sequence(), Some(Sequence::new(9)));
+    assert_eq!(warning.message(), "internal invariant violated");
+}

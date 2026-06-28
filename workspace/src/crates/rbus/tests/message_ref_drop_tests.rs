@@ -9,7 +9,7 @@ fn message_ref_drop_releases_pinned_slot() {
     let subscriber = bus
         .subscriber("/topic")
         .expect("subscriber operation should succeed");
-    let publisher = bus
+    let mut publisher = bus
         .publisher("/topic", TopicConfig::new(16, 1))
         .expect("publisher operation should succeed");
 

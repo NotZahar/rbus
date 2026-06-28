@@ -348,7 +348,7 @@ fn run_child_publisher() {
     let topic = std::env::var(TOPIC_ENV).expect("operation should succeed");
     let payload = std::env::var(PAYLOAD_ENV).expect("operation should succeed");
     let bus = Bus::connect(&domain).expect("publisher operation should succeed");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(&topic, TopicConfig::new(TEST_MAX_MESSAGE_SIZE, TEST_DEPTH))
         .expect("publisher operation should succeed");
     print_child_line(PUBLISHER_READY_LINE);

@@ -20,7 +20,7 @@ fn publish_bytes_copies_payload_once_into_stream_slot() {
     let subscriber = bus
         .subscriber("/control/cmd")
         .expect("subscriber operation should succeed");
-    let publisher = bus
+    let mut publisher = bus
         .publisher("/control/cmd", TopicConfig::new(64, 8))
         .expect("publisher operation should succeed");
 
@@ -41,7 +41,7 @@ fn subscriber_cursor_moves_to_oldest_available_message_after_gap_warning() {
     let subscriber = bus
         .subscriber(GAP_TEST_TOPIC)
         .expect("subscriber operation should succeed");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(
             GAP_TEST_TOPIC,
             TopicConfig::new(GAP_TEST_MAX_MESSAGE_SIZE, GAP_TEST_STREAM_DEPTH),
@@ -90,7 +90,7 @@ fn subscriber_cursor_moves_to_oldest_available_message_after_gap_warning() {
 fn subscriber_created_after_publish_reads_only_new_messages() {
     let daemon = common::DaemonProcess::start("publish-after-subscriber");
     let bus = Bus::connect(&daemon.domain).expect("domain should connect");
-    let publisher = bus
+    let mut publisher = bus
         .publisher("/control/cmd", TopicConfig::new(64, 8))
         .expect("publisher operation should succeed");
     publisher
@@ -122,7 +122,7 @@ fn subscriber_created_after_publish_reads_only_new_messages() {
 fn publish_bytes_rejects_oversized_message() {
     let daemon = common::DaemonProcess::start("publish-bytes-large");
     let bus = Bus::connect(&daemon.domain).expect("domain should connect");
-    let publisher = bus
+    let mut publisher = bus
         .publisher("/control/cmd", TopicConfig::new(2, 8))
         .expect("publisher operation should succeed");
     let warning = match publisher.publish_bytes(&[1, 2, 3]) {

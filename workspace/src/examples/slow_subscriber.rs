@@ -40,7 +40,7 @@ fn run() -> ExampleResult<()> {
 
     let bus = Bus::connect(&domain)?;
     let subscriber = bus.subscriber(&topic)?;
-    let publisher = bus.publisher(&topic, TopicConfig::new(max_message_size, depth))?;
+    let mut publisher = bus.publisher(&topic, TopicConfig::new(max_message_size, depth))?;
     print_line("slow-subscriber-ready")?;
     for message_index in 0..message_count {
         let payload = format!("{payload_prefix}{message_index}");

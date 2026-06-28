@@ -7,7 +7,7 @@
 | --- | --- | --- | --- |
 | Public API | `0.1.0` | `RBUS_API_VERSION` | При изменении публичного crate API или workspace package version. |
 | Control protocol | `2` | `CONTROL_PROTOCOL_VERSION` | При изменении frame layout, opcode set, payload schema или handshake semantics. |
-| Stream segment ABI | `4` | `STREAM_SEGMENT_ABI_VERSION` | При изменении `SegmentHeader`, `StreamCounters`, `SlotHeader`, offsets, flags или payload layout. |
+| Stream segment ABI | `5` | `STREAM_SEGMENT_ABI_VERSION` | При изменении `SegmentHeader`, `StreamCounters`, `SlotHeader`, offsets, flags или payload layout. |
 | Topic wait segment ABI | `1` | `TOPIC_WAIT_ABI_VERSION` | При изменении `TopicWaitHeader` или futex-visible wait semantics. |
 
 `SHARED_MEMORY_ABI_VERSION` и `SHARED_MEMORY_MAGIC` оставлены только как alias

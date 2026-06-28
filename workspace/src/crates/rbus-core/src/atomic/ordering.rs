@@ -12,6 +12,9 @@ pub const WRITER_CLAIM_ORDERING: Ordering = Ordering::AcqRel;
 pub const WRITER_CLAIM_FAILURE_ORDERING: Ordering = Ordering::Acquire;
 
 /// Internal documentation
+pub const WRITER_CLAIM_CLEAR_ORDERING: Ordering = Ordering::Release;
+
+/// Internal documentation
 pub const WRITER_STATE_UPDATE_ORDERING: Ordering = Ordering::Release;
 
 /// Internal documentation

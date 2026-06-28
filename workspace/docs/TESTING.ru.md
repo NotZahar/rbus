@@ -103,9 +103,23 @@ stale socket cleanup и проверяет, что уже attached mmap data pla
 Allocation regression покрыт `crates/rbus/tests/zero_copy_allocation_tests.rs`.
 Тестовый бинарь включает custom global allocator и доказывает 0 heap allocations
 для `loan` + `publish`, `try_recv` с сообщением и `try_recv` без сообщения.
+Per-message refcount regression покрыт unit test-ом
+`message_reservations_do_not_clone_stream_arc`: loan/read reservation больше не
+увеличивают `Arc::strong_count` attached stream-а.
+False-sharing regression для counters покрыт layout test-ом
+`stream_counters_do_not_share_cache_lines_between_write_heavy_fields`: каждый
+write-heavy field `StreamCounters` начинается с новой cache line.
+Reader pin/claim regression покрыт unit tests в `crates/rbus/src/stream/tests.rs`:
+`uncontended_reader_pin_uses_empty_mask_path`,
+`contended_reader_pin_keeps_multi_subscriber_fanout` и
+`rollback_clears_writer_claim_without_reader_bits`.
 `empty_try_recv_after_initial_attach_does_not_use_control_plane` дополнительно
 убивает daemon после attach и проверяет, что пустой `try_recv` возвращает
 `None`, а не пытается выполнить новый control request.
+Typestate regression для loan guard закреплён compile-fail doctest-ом в
+`crates/rbus/src/loaned.rs`: второй outstanding loan на том же `Publisher` не
+компилируется, потому что `LoanedMessage` удерживает `&mut Publisher` до
+`publish` или `Drop`.
 
 Syscall regression покрыт `workspace/scripts/hot-path-syscall-smoke.ts`.
 TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe publish` и
@@ -128,13 +142,17 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | IPC warning paths и state checks | `crates/rbus-ipc/src/{control,futex,mmap,permissions,stream_segment}.rs` | `crates/rbus-ipc/tests/warning_path_tests.rs` |
 | Commit timestamp metadata | `crates/rbus/src/stream.rs` | `loaned_publish_makes_payload_visible_to_subscriber` |
 | Version contract для public API, control protocol, stream ABI и topic wait ABI | `crates/rbus-core/src/constants.rs`, `docs/VERSIONS.ru.md` | `api_and_abi_versions_are_centrally_synced` |
-| mmap-backed stream header и stream segment ABI v4 без stream wake fields | `crates/rbus/src/stream.rs`, `crates/rbus-core/src/layout/segment.rs` | `stream_initializes_shared_memory_segment_header`, `segment_header_v4_has_no_stream_wake_fields_between_sequence_and_flags` |
+| mmap-backed stream header и stream segment ABI v5 с cache-line counters | `crates/rbus/src/stream.rs`, `crates/rbus-core/src/{layout/segment.rs,stats.rs}` | `stream_initializes_shared_memory_segment_header`, `stream_segment_abi_has_cache_line_aligned_counters_without_header_wake_fields`, `stream_counters_do_not_share_cache_lines_between_write_heavy_fields` |
 | Topic wait segment ABI v1 с magic/version header | `crates/rbus-ipc/src/topic_wait.rs` | `topic_wait_segment_header_exposes_current_abi`, `topic_wait_segment_rejects_wrong_abi_header` |
 | Data-plane warning counters/state | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `crates/rbus/tests/warning_path_tests.rs`, `disconnected_warning_path_increments_total_on_closed_stream` |
+| Typestate loan guard без runtime `AtomicBool` | `crates/rbus/src/{loaned.rs,publisher.rs}` | compile-fail doctest `cannot_start_second_loan_before_first_is_finished`, `loaned_publish_makes_payload_visible_to_subscriber` |
 | Atomic slot protocols | `crates/rbus-core/src/atomic/ordering.rs`, `crates/rbus/src/stream.rs` | `crates/rbus-core/tests/atomic_protocol_model_tests.rs` |
 | Gap handling продвигает subscriber cursor | `crates/rbus/src/{stream.rs,subscriber.rs}` | `subscriber_cursor_moves_to_oldest_available_message_after_gap_warning` |
 | Пустой `try_recv` не ходит в control plane | `crates/rbus/src/subscriber.rs` | `empty_try_recv_after_initial_attach_does_not_use_control_plane` |
 | 0 allocations в zero-copy hot path | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `zero_copy_hot_path_does_not_allocate` |
+| Нет per-message `Arc::clone` в loan/read reservation | `crates/rbus/src/{stream.rs,loaned.rs,message_ref.rs}` | `message_reservations_do_not_clone_stream_arc` |
+| Нет false sharing между write-heavy counters | `crates/rbus-core/src/stats.rs` | `stream_counters_do_not_share_cache_lines_between_write_heavy_fields` |
+| Reader pin fast path и writer-claim clear без RMW | `crates/rbus/src/stream.rs` | `uncontended_reader_pin_uses_empty_mask_path`, `contended_reader_pin_keeps_multi_subscriber_fanout`, `rollback_clears_writer_claim_without_reader_bits` |
 | 0 syscalls в non-blocking hot path | `crates/rbus-bench/src/hot_path_syscall.rs` | `workspace/scripts/hot-path-syscall-smoke.ts` |
 | Multi-process benchmark suite smoke | `crates/rbus-bench/src/{suite.rs,worker.rs}` | `bench_suite_matrix_smoke_outputs_csv` |
 | Benchmark regression gates | `crates/rbus-bench/src/baseline.rs` | `full_baseline_entry_allows_matching_result`, `baseline_gate_rejects_latency_regression`, `baseline_gate_rejects_zero_payload_key` |

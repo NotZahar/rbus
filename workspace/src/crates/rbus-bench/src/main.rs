@@ -19,6 +19,7 @@ mod suite_repetition;
 mod suite_worker_output;
 mod syscall_measurement;
 mod system_metrics;
+mod timestamp_payload;
 mod topology;
 mod transport_kind;
 mod transports;

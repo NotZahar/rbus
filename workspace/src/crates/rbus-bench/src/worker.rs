@@ -6,6 +6,7 @@ use rbus_core::warning::{Warning, WarningCode};
 
 use crate::allocation;
 use crate::system_metrics::{ProcessSystemSnapshot, monotonic_time_ns};
+use crate::timestamp_payload::{TIMESTAMP_BYTES, decode_timestamp, encode_timestamp};
 use crate::transport_kind::TransportKind;
 use crate::wait_mode::WaitMode;
 
@@ -16,13 +17,10 @@ const FILL_BYTE: u8 = 0xA5;
 const BUSY_POLL_PUBLISHER_STREAM_LINGER_MS: u64 = 500;
 const READY_FILE_BYTES: &[u8] = b"ready\n";
 const RECV_TIMEOUT_MS: u64 = 5_000;
-const TIMESTAMP_BYTES: usize = core::mem::size_of::<u64>();
 const WARMUP_MESSAGES_PER_PUBLISHER: u32 = 64;
 
 pub const LATENCY_PREFIX: &str = "RBUS_BENCH_LATENCY_NS ";
 pub const RESULT_PREFIX: &str = "RBUS_BENCH_WORKER_RESULT ";
-
-const _: () = assert!(TIMESTAMP_BYTES <= 64);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkerRole {
@@ -167,14 +165,14 @@ pub(crate) const fn warmup_messages_per_publisher() -> u32 {
 
 fn run_publisher(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> {
     let bus = Bus::connect(&arguments.domain)?;
-    let publisher = bus.publisher(&arguments.topic, topic_config(arguments))?;
+    let mut publisher = bus.publisher(&arguments.topic, topic_config(arguments))?;
     if arguments.transport.is_rbus() && arguments.wait_mode == WaitMode::BusyPoll {
         std::thread::sleep(Duration::from_millis(BUSY_POLL_PUBLISHER_START_DELAY_MS));
     }
     let mut publish_bytes_buffer = vec![FILL_BYTE; arguments.payload_size];
 
     for _message_index in 0..WARMUP_MESSAGES_PER_PUBLISHER {
-        publish_one(arguments, &publisher, &mut publish_bytes_buffer)?;
+        publish_one(arguments, &mut publisher, &mut publish_bytes_buffer)?;
     }
 
     let system_start = ProcessSystemSnapshot::capture()?;
@@ -184,7 +182,7 @@ fn run_publisher(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> {
         if arguments.wait_mode.uses_blocking_wait() {
             std::thread::sleep(Duration::from_micros(BLOCKING_PUBLISH_DELAY_MICROS));
         }
-        publish_one(arguments, &publisher, &mut publish_bytes_buffer)?;
+        publish_one(arguments, &mut publisher, &mut publish_bytes_buffer)?;
     }
     let duration_ns = monotonic_time_ns()?.saturating_sub(started_at);
     let allocations = allocation::allocation_delta(allocation_start);
@@ -255,13 +253,18 @@ fn run_subscriber(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> 
 fn run_ping_responder(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> {
     let bus = Bus::connect(&arguments.domain)?;
     let subscriber = bus.subscriber(&arguments.topic)?;
-    let publisher = bus.publisher(&arguments.response_topic, topic_config(arguments))?;
+    let mut publisher = bus.publisher(&arguments.response_topic, topic_config(arguments))?;
     write_ready_file(arguments)?;
     let mut publish_bytes_buffer = vec![FILL_BYTE; arguments.payload_size];
     for _message_index in 0..WARMUP_MESSAGES_PER_PUBLISHER {
         let message = receive_message(arguments.wait_mode, &subscriber)?;
         let sent_at = decode_timestamp(message.as_slice())?;
-        publish_timestamped(arguments, &publisher, &mut publish_bytes_buffer, sent_at)?;
+        publish_timestamped(
+            arguments,
+            &mut publisher,
+            &mut publish_bytes_buffer,
+            sent_at,
+        )?;
     }
     let total_messages = u64::from(arguments.messages_per_publisher);
     let system_start = ProcessSystemSnapshot::capture()?;
@@ -270,7 +273,12 @@ fn run_ping_responder(arguments: &WorkerArguments) -> Result<WorkerReport, Warni
     for _message_index in 0..total_messages {
         let message = receive_message(arguments.wait_mode, &subscriber)?;
         let sent_at = decode_timestamp(message.as_slice())?;
-        publish_timestamped(arguments, &publisher, &mut publish_bytes_buffer, sent_at)?;
+        publish_timestamped(
+            arguments,
+            &mut publisher,
+            &mut publish_bytes_buffer,
+            sent_at,
+        )?;
     }
     let duration_ns = monotonic_time_ns()?.saturating_sub(started_at);
     let allocations = allocation::allocation_delta(allocation_start);
@@ -295,12 +303,17 @@ fn run_ping_responder(arguments: &WorkerArguments) -> Result<WorkerReport, Warni
 
 fn run_ping_requester(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> {
     let bus = Bus::connect(&arguments.domain)?;
-    let publisher = bus.publisher(&arguments.topic, topic_config(arguments))?;
+    let mut publisher = bus.publisher(&arguments.topic, topic_config(arguments))?;
     let subscriber = bus.subscriber(&arguments.response_topic)?;
     let mut publish_bytes_buffer = vec![FILL_BYTE; arguments.payload_size];
     for _message_index in 0..WARMUP_MESSAGES_PER_PUBLISHER {
         let sent_at = monotonic_time_ns()?;
-        publish_timestamped(arguments, &publisher, &mut publish_bytes_buffer, sent_at)?;
+        publish_timestamped(
+            arguments,
+            &mut publisher,
+            &mut publish_bytes_buffer,
+            sent_at,
+        )?;
         drop(receive_message(arguments.wait_mode, &subscriber)?);
     }
     let mut latencies = vec![0_u64; arguments.messages_per_publisher as usize];
@@ -309,7 +322,12 @@ fn run_ping_requester(arguments: &WorkerArguments) -> Result<WorkerReport, Warni
     let started_at = monotonic_time_ns()?;
     for latency in &mut latencies {
         let sent_at = monotonic_time_ns()?;
-        publish_timestamped(arguments, &publisher, &mut publish_bytes_buffer, sent_at)?;
+        publish_timestamped(
+            arguments,
+            &mut publisher,
+            &mut publish_bytes_buffer,
+            sent_at,
+        )?;
         let response = receive_message(arguments.wait_mode, &subscriber)?;
         let response_timestamp = decode_timestamp(response.as_slice())?;
         *latency = monotonic_time_ns()?.saturating_sub(response_timestamp);
@@ -348,20 +366,20 @@ fn run_crash_subscriber(arguments: &WorkerArguments) -> Result<(), Warning> {
 
 fn run_crash_publisher(arguments: &WorkerArguments) -> Result<(), Warning> {
     let bus = Bus::connect(&arguments.domain)?;
-    let publisher = bus.publisher(&arguments.topic, topic_config(arguments))?;
+    let mut publisher = bus.publisher(&arguments.topic, topic_config(arguments))?;
     let mut publish_bytes_buffer = vec![FILL_BYTE; arguments.payload_size];
     let total_messages = arguments
         .messages_per_publisher
         .saturating_add(WARMUP_MESSAGES_PER_PUBLISHER);
     for _message_index in 0..total_messages {
-        publish_one(arguments, &publisher, &mut publish_bytes_buffer)?;
+        publish_one(arguments, &mut publisher, &mut publish_bytes_buffer)?;
     }
     std::process::abort();
 }
 
 fn publish_one(
     arguments: &WorkerArguments,
-    publisher: &Publisher,
+    publisher: &mut Publisher,
     publish_bytes_buffer: &mut [u8],
 ) -> Result<(), Warning> {
     let sent_at = monotonic_time_ns()?;
@@ -370,7 +388,7 @@ fn publish_one(
 
 fn publish_timestamped(
     arguments: &WorkerArguments,
-    publisher: &Publisher,
+    publisher: &mut Publisher,
     publish_bytes_buffer: &mut [u8],
     timestamp_ns: u64,
 ) -> Result<(), Warning> {
@@ -380,7 +398,7 @@ fn publish_timestamped(
             let payload = message.as_mut_slice();
             payload.fill(FILL_BYTE);
             encode_timestamp(payload, timestamp_ns)?;
-            let _sequence = publisher.publish(message)?;
+            let _sequence = message.publish()?;
         }
         TransportKind::RbusPublishBytes => {
             publish_bytes_buffer.fill(FILL_BYTE);
@@ -409,31 +427,6 @@ fn receive_message(
                 Warning::new(WarningCode::Timeout, COMPONENT_RBUS_BENCH, "recv_timeout")
             }),
     }
-}
-
-fn encode_timestamp(payload: &mut [u8], timestamp_ns: u64) -> Result<(), Warning> {
-    let target = payload.get_mut(..TIMESTAMP_BYTES).ok_or_else(|| {
-        Warning::new(
-            WarningCode::InvalidConfig,
-            COMPONENT_RBUS_BENCH,
-            "encode_timestamp",
-        )
-    })?;
-    target.copy_from_slice(&timestamp_ns.to_ne_bytes());
-    Ok(())
-}
-
-fn decode_timestamp(payload: &[u8]) -> Result<u64, Warning> {
-    let source = payload.get(..TIMESTAMP_BYTES).ok_or_else(|| {
-        Warning::new(
-            WarningCode::InvalidConfig,
-            COMPONENT_RBUS_BENCH,
-            "decode_timestamp",
-        )
-    })?;
-    let mut bytes = [0_u8; TIMESTAMP_BYTES];
-    bytes.copy_from_slice(source);
-    Ok(u64::from_ne_bytes(bytes))
 }
 
 fn topic_config(arguments: &WorkerArguments) -> TopicConfig {

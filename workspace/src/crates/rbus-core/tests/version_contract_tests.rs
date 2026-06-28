@@ -8,15 +8,15 @@ use rbus_core::constants::{
 const WORKSPACE_ROOT_ANCESTOR_INDEX: usize = 3;
 const EXPECTED_API_VERSION: &str = "0.1.0";
 const EXPECTED_CONTROL_PROTOCOL_VERSION: u16 = 2;
-const EXPECTED_STREAM_SEGMENT_ABI_VERSION: u32 = 4;
+const EXPECTED_STREAM_SEGMENT_ABI_VERSION: u32 = 5;
 const EXPECTED_TOPIC_WAIT_ABI_VERSION: u32 = 1;
 const WORKSPACE_VERSION_LINE: &str = "version = \"0.1.0\"";
 const API_VERSION_DOC_ROW: &str = "| Public API | `0.1.0` |";
 const CONTROL_PROTOCOL_DOC_ROW: &str = "| Control protocol | `2` |";
-const STREAM_SEGMENT_ABI_DOC_ROW: &str = "| Stream segment ABI | `4` |";
+const STREAM_SEGMENT_ABI_DOC_ROW: &str = "| Stream segment ABI | `5` |";
 const TOPIC_WAIT_ABI_DOC_ROW: &str = "| Topic wait segment ABI | `1` |";
-const README_VERSION_LINK: &str = "[Версии API/ABI](../docs/VERSIONS.ru.md)";
-const CHANGELOG_STREAM_ABI_LINE: &str = "- Stream segment ABI version: `4`.";
+const README_VERSION_LINK_TARGET: &str = "(../docs/VERSIONS.ru.md)";
+const CHANGELOG_STREAM_ABI_LINE: &str = "- Stream segment ABI version: `5`.";
 const CHANGELOG_TOPIC_WAIT_ABI_LINE: &str = "- Topic wait segment ABI version: `1`.";
 
 #[test]
@@ -42,7 +42,7 @@ fn api_and_abi_versions_are_centrally_synced() {
     assert_contains(&versions_document, CONTROL_PROTOCOL_DOC_ROW);
     assert_contains(&versions_document, STREAM_SEGMENT_ABI_DOC_ROW);
     assert_contains(&versions_document, TOPIC_WAIT_ABI_DOC_ROW);
-    assert_contains(&readme, README_VERSION_LINK);
+    assert_contains(&readme, README_VERSION_LINK_TARGET);
     assert_contains(&changelog, CHANGELOG_STREAM_ABI_LINE);
     assert_contains(&changelog, CHANGELOG_TOPIC_WAIT_ABI_LINE);
 }

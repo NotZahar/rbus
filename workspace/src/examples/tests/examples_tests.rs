@@ -84,7 +84,7 @@ fn basic_sub_receives_payload_from_parent_publisher() {
     let daemon = DaemonProcess::start("example-basic-sub");
     let topic = "/examples/basic-sub";
     let bus = Bus::connect(&daemon.domain).expect("domain should connect");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(topic, TopicConfig::new(TEST_MAX_MESSAGE_SIZE, TEST_DEPTH))
         .expect("publisher operation should succeed");
     let mut subscriber_process = ChildProcess::spawn(
@@ -112,7 +112,7 @@ fn multi_sub_receives_two_payloads_from_parent_publisher() {
     let daemon = DaemonProcess::start("example-multi-sub");
     let topic = "/examples/multi-sub";
     let bus = Bus::connect(&daemon.domain).expect("domain should connect");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(topic, TopicConfig::new(TEST_MAX_MESSAGE_SIZE, TEST_DEPTH))
         .expect("publisher operation should succeed");
     let mut subscriber_process = ChildProcess::spawn(

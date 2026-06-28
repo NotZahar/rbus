@@ -33,10 +33,10 @@ fn run() -> ExampleResult<()> {
     let hold_duration = arguments.required_duration_millis(HOLD_MILLISECONDS_ARGUMENT)?;
 
     let bus = Bus::connect(&domain)?;
-    let publisher = bus.publisher(&topic, TopicConfig::new(max_message_size, depth))?;
+    let mut publisher = bus.publisher(&topic, TopicConfig::new(max_message_size, depth))?;
     let mut message = publisher.loan(payload.len())?;
     message.as_mut_slice().copy_from_slice(payload.as_bytes());
-    let sequence = publisher.publish(message)?;
+    let sequence = message.publish()?;
     print_line(&format!(
         "loaned-published sequence={} bytes={}",
         sequence.as_u64(),

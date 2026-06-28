@@ -36,7 +36,7 @@ const _: () = assert!(HOT_PATH_PAYLOAD_SENTINEL_INDEX < HOT_PATH_PAYLOAD_LENGTH)
 /// Internal documentation
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HotPathOperation {
-    /// `Publisher::loan` + `Publisher::publish`
+    /// `Publisher::loan` + `LoanedMessage::publish`
     Publish,
     /// Subscriber runtime metadata
     TryRecv,
@@ -126,27 +126,27 @@ pub fn run_probe(operation: HotPathOperation) -> Result<HotPathSyscallReport, Wa
 
 fn run_publish_probe(bus: &Bus) -> Result<(), Warning> {
     let subscriber = bus.subscriber(HOT_PATH_TOPIC)?;
-    let publisher = bus.publisher(HOT_PATH_TOPIC, topic_config())?;
+    let mut publisher = bus.publisher(HOT_PATH_TOPIC, topic_config())?;
 
-    publish_message(&publisher)?;
+    publish_message(&mut publisher)?;
     drop(receive_required(&subscriber)?);
     for _iteration in 0..HOT_PATH_WARMUP_ITERATIONS {
-        publish_message(&publisher)?;
+        publish_message(&mut publisher)?;
     }
 
     write_stdout_marker(HotPathOperation::Publish.begin_marker())?;
     for _iteration in 0..HOT_PATH_MEASURED_ITERATIONS {
-        publish_message(&publisher)?;
+        publish_message(&mut publisher)?;
     }
     write_stdout_marker(HotPathOperation::Publish.end_marker())
 }
 
 fn run_try_recv_probe(bus: &Bus) -> Result<(), Warning> {
     let subscriber = bus.subscriber(HOT_PATH_TOPIC)?;
-    let publisher = bus.publisher(HOT_PATH_TOPIC, topic_config())?;
+    let mut publisher = bus.publisher(HOT_PATH_TOPIC, topic_config())?;
 
     for _iteration in 0..HOT_PATH_WARMUP_ITERATIONS + HOT_PATH_MEASURED_ITERATIONS {
-        publish_message(&publisher)?;
+        publish_message(&mut publisher)?;
     }
     for _iteration in 0..HOT_PATH_WARMUP_ITERATIONS {
         let _message = receive_required(&subscriber)?;
@@ -163,10 +163,10 @@ fn topic_config() -> TopicConfig {
     TopicConfig::new(HOT_PATH_PAYLOAD_LENGTH, HOT_PATH_DEPTH)
 }
 
-fn publish_message(publisher: &Publisher) -> Result<(), Warning> {
+fn publish_message(publisher: &mut Publisher) -> Result<(), Warning> {
     let mut message = publisher.loan(HOT_PATH_PAYLOAD_LENGTH)?;
     message.as_mut_slice()[HOT_PATH_PAYLOAD_SENTINEL_INDEX] = HOT_PATH_PAYLOAD_SENTINEL_BYTE;
-    let _sequence = publisher.publish(message)?;
+    let _sequence = message.publish()?;
     Ok(())
 }
 

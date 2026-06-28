@@ -89,8 +89,8 @@ const WARNING_PATH_COVERAGE: &[WarningPathCoverage] = &[
     },
     WarningPathCoverage {
         code: WarningCode::InternalInvariantWarning,
-        test_name: "internal_invariant_warning_path_rolls_back_foreign_loan",
-        state_assertion: "foreign loan rollback releases the original stream",
+        test_name: "internal_invariant_warning_path_preserves_context_state",
+        state_assertion: "warning context stays attached to invariant failure",
     },
 ];
 

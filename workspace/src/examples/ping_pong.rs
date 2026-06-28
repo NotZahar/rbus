@@ -72,7 +72,7 @@ fn run_client(
 ) -> ExampleResult<()> {
     let bus = Bus::connect(domain)?;
     let subscriber = bus.subscriber(pong_topic)?;
-    let publisher = bus.publisher(ping_topic, TopicConfig::new(max_message_size, depth))?;
+    let mut publisher = bus.publisher(ping_topic, TopicConfig::new(max_message_size, depth))?;
     let ping_sequence = publisher.publish_bytes(payload.as_bytes())?;
     print_line(&format!(
         "client-ping sequence={} bytes={}",
@@ -101,7 +101,7 @@ fn run_server(
 ) -> ExampleResult<()> {
     let bus = Bus::connect(domain)?;
     let subscriber = bus.subscriber(ping_topic)?;
-    let publisher = bus.publisher(pong_topic, TopicConfig::new(max_message_size, depth))?;
+    let mut publisher = bus.publisher(pong_topic, TopicConfig::new(max_message_size, depth))?;
     print_line("server-ready")?;
     let message = subscriber
         .recv_timeout(receive_timeout)?

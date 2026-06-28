@@ -1,9 +1,11 @@
 //! Publisher API
+use core::cell::Cell;
+use core::marker::PhantomData;
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use rbus_core::ids::PublisherId;
-use rbus_core::warning::{Warning, WarningCode};
-use std::path::PathBuf;
+use rbus_core::sequence::Sequence;
+use rbus_core::warning::Warning;
 
 use rbus_ipc::control::client::ControlClient;
 use rbus_ipc::fd::OwnedFileDescriptor;
@@ -11,17 +13,15 @@ use rbus_ipc::topic_wait::TopicWaitSegment;
 
 use crate::loaned::LoanedMessage;
 use crate::reregister::PublisherReregisterWorker;
-use crate::sequence::Sequence;
 use crate::stats::Stats;
 use crate::stream::StreamInner;
-
-const COMPONENT_RBUS: &str = "rbus";
 
 /// Publisher runtime metadata
 pub struct Publisher {
     _reregister_worker: PublisherReregisterWorker,
     stream: Arc<StreamInner>,
     topic_wait: Arc<TopicWaitSegment>,
+    not_sync: PhantomData<Cell<()>>,
 }
 
 impl Publisher {
@@ -44,50 +44,42 @@ impl Publisher {
             _reregister_worker: reregister_worker,
             stream,
             topic_wait,
+            not_sync: PhantomData,
         })
     }
 
-    pub(crate) fn publisher_id(&self) -> PublisherId {
-        self.stream.publisher_id()
-    }
-
     /// Stream runtime metadata
-    pub fn loan(&self, length: usize) -> Result<LoanedMessage<'_>, Warning> {
+    pub fn loan(&mut self, length: usize) -> Result<LoanedMessage<'_>, Warning> {
         let reservation = self.stream.try_begin_loan(length)?;
         Ok(LoanedMessage::from_reservation(self, reservation))
     }
 
     /// Internal documentation
-    pub fn publish(&self, mut message: LoanedMessage<'_>) -> Result<Sequence, Warning> {
-        if message.publisher_id != self.publisher_id() {
-            message.stream.rollback_loan(message.slot_index);
-            message.mark_published();
-            return Err(Warning::new(
-                WarningCode::InternalInvariantWarning,
-                COMPONENT_RBUS,
-                "Publisher::publish::publisher_id",
-            ));
-        }
-
-        let sequence = message.sequence;
-        let commit_result =
-            self.stream
-                .commit_loan(message.slot_index, message.sequence, message.length);
-        message.mark_published();
-        commit_result?;
-        self.topic_wait.wake_waiters()?;
-        Ok(sequence)
-    }
-
-    /// Internal documentation
-    pub fn publish_bytes(&self, bytes: &[u8]) -> Result<Sequence, Warning> {
+    pub fn publish_bytes(&mut self, bytes: &[u8]) -> Result<Sequence, Warning> {
         let mut message = self.loan(bytes.len())?;
         message.as_mut_slice().copy_from_slice(bytes);
-        self.publish(message)
+        message.publish()
     }
 
     /// Publisher runtime metadata
     pub fn stats(&self) -> Stats {
         self.stream.stats()
+    }
+
+    pub(crate) fn commit_loan(
+        &self,
+        slot_index: usize,
+        sequence: Sequence,
+        length: usize,
+    ) -> Result<(), Warning> {
+        self.stream.commit_loan(slot_index, sequence, length)
+    }
+
+    pub(crate) fn rollback_loan(&self, slot_index: usize) {
+        self.stream.rollback_loan(slot_index);
+    }
+
+    pub(crate) fn wake_waiters(&self) -> Result<(), Warning> {
+        self.topic_wait.wake_waiters()
     }
 }

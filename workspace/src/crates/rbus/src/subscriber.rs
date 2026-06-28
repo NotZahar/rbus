@@ -169,9 +169,10 @@ impl Subscriber {
             return Ok(None);
         }
 
-        let start_index = self.next_stream_index.get() % streams.len();
-        for offset in 0..streams.len() {
-            let stream_index = (start_index + offset) % streams.len();
+        let stream_count = streams.len();
+        let start_index = self.next_stream_index.get() % stream_count;
+        for offset in 0..stream_count {
+            let stream_index = (start_index + offset) % stream_count;
             let subscriber_stream = &mut streams[stream_index];
             match subscriber_stream
                 .stream
@@ -181,8 +182,8 @@ impl Subscriber {
                 ReadAttempt::Message(read_reservation) => {
                     subscriber_stream.cursor = subscriber_stream.cursor.next();
                     self.next_stream_index
-                        .set((stream_index + 1) % streams.len());
-                    return Ok(Some(MessageRef::from_reservation(read_reservation)));
+                        .set((stream_index + 1) % stream_count);
+                    return Ok(Some(MessageRef::from_reservation(self, read_reservation)));
                 }
                 ReadAttempt::Skipped {
                     next_sequence,

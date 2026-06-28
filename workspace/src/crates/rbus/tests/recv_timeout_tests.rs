@@ -27,7 +27,7 @@ fn recv_timeout_returns_message_before_deadline() {
     let subscriber = bus
         .subscriber("/topic")
         .expect("subscriber operation should succeed");
-    let publisher = bus
+    let mut publisher = bus
         .publisher("/topic", TopicConfig::new(16, 8))
         .expect("publisher operation should succeed");
     publisher
@@ -52,7 +52,7 @@ fn recv_timeout_wakes_when_publisher_appears_after_subscriber_waits() {
     let publisher_thread = std::thread::spawn(move || {
         std::thread::sleep(LATE_PUBLISHER_DELAY);
         let bus = Bus::connect(&publisher_domain).expect("domain should connect");
-        let publisher = bus
+        let mut publisher = bus
             .publisher("/topic", TopicConfig::new(16, 8))
             .expect("publisher operation should succeed");
         publisher

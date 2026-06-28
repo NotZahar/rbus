@@ -51,7 +51,7 @@ const RESTART_SECOND_PAYLOAD: &[u8] = b"after-restart";
 fn rbusd_cleanup_clears_reader_bit_after_subscriber_crash() {
     let daemon = common::DaemonProcess::start("subscriber-crash");
     let bus = Bus::connect(&daemon.domain).expect("publisher operation should succeed");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(
             SUBSCRIBER_CRASH_TOPIC,
             TopicConfig::new(SLOT_SIZE, SINGLE_SLOT_DEPTH),
@@ -73,7 +73,7 @@ fn rbusd_cleanup_clears_reader_bit_after_subscriber_crash() {
     assert_eq!(pipe.read_byte(), CHILD_PINNED_BYTE);
     kill_child_and_wait(child_pid);
 
-    wait_until_publish_succeeds(&publisher, SUBSCRIBER_CRASH_RECOVERY_PAYLOAD);
+    wait_until_publish_succeeds(&mut publisher, SUBSCRIBER_CRASH_RECOVERY_PAYLOAD);
 }
 
 #[test]
@@ -117,7 +117,7 @@ fn rbusd_restart_keeps_existing_data_plane_working() {
     let subscriber = bus
         .subscriber(RESTART_TOPIC)
         .expect("subscriber operation should succeed");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(RESTART_TOPIC, TopicConfig::new(SLOT_SIZE, TEST_DEPTH))
         .expect("publisher operation should succeed");
 
@@ -235,7 +235,7 @@ fn rbusd_binary_path() -> PathBuf {
 
 fn child_publisher_publishes_and_waits(domain: &str, topic: &str, write_fd: RawFd) -> ! {
     let bus = Bus::connect(domain).unwrap_or_else(|_| child_exit());
-    let publisher = bus
+    let mut publisher = bus
         .publisher(topic, TopicConfig::new(SLOT_SIZE, TEST_DEPTH))
         .unwrap_or_else(|_| child_exit());
     publisher
@@ -247,7 +247,7 @@ fn child_publisher_publishes_and_waits(domain: &str, topic: &str, write_fd: RawF
     }
 }
 
-fn wait_until_publish_succeeds(publisher: &Publisher, payload: &[u8]) {
+fn wait_until_publish_succeeds(publisher: &mut Publisher, payload: &[u8]) {
     for _attempt in 0..WAIT_ATTEMPTS {
         match publisher.publish_bytes(payload) {
             Ok(_sequence) => return,

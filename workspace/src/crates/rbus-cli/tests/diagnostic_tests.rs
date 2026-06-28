@@ -250,7 +250,7 @@ fn assert_valid_json(output: Output) -> Value {
 
 fn seed_daemon_data(domain: &str) -> (Publisher, Subscriber) {
     let bus = Bus::connect(domain).expect("operation should succeed");
-    let publisher = bus
+    let mut publisher = bus
         .publisher(
             TEST_TOPIC,
             TopicConfig::new(TEST_MAX_MESSAGE_SIZE, TEST_DEPTH),
