@@ -90,17 +90,20 @@ Inspect topic-а выполняется через `rbus-cli inspect --topic /na
 `--topic` указан без значения, CLI завершает разбор аргументов с
 `WarningCode::InvalidConfig` и exit code `2`. Inspect пересчитывает stable topic
 hash на стороне daemon-а и выводит stream metadata: ids, generation, segment
-size, slot size, depth, ABI, flags, wake state и write sequence. Payload не
+size, slot size, depth, stream segment ABI, flags и write sequence. Payload не
 читается.
+Wait state хранится в отдельном topic-level wait segment-е и не является частью
+stream inspect snapshot-а.
 
 `rbus-cli cleanup --domain <domain>` очищает stale socket pathname, orphaned
 registry records, пустые topics и reader bits для inactive subscriber ids.
 Ответ показывает отдельные counters очистки.
 
 `rbus-cli doctor --domain <domain>` проверяет `/run/user/<uid>`, права и owner
-socket directory, socket path, control protocol version, shared-memory ABI
-version, `memfd` создание/seal, `mmap MAP_SHARED`, `eventfd`, private/shared
-`futex`, `SCM_RIGHTS`, `MAX_SEGMENT_SIZE`, `RLIMIT_NOFILE`, `RLIMIT_MEMLOCK`,
+socket directory, socket path, public API version, control protocol version,
+stream segment ABI version, topic wait segment ABI version, `memfd`
+создание/seal, `mmap MAP_SHARED`, `eventfd`, private/shared `futex`,
+`SCM_RIGHTS`, `MAX_SEGMENT_SIZE`, `RLIMIT_NOFILE`, `RLIMIT_MEMLOCK`,
 `RLIMIT_FSIZE`, `RLIMIT_AS` и текущий warning counter. Любой failed check
 возвращается как warning и завершает команду с exit code `2`.
 

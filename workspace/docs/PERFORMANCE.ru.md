@@ -16,6 +16,13 @@ commit. Этот timestamp path проверяется тем же syscall smoke
 времени начнёт выполнять traced syscall между hot-path marker-ами, проверка
 падает.
 
+Slot protocol не использует `SeqCst`. Writer claim и reader pin синхронизируются
+через acquire/release CAS на `readers_mask`; payload и metadata публикуются
+release-store-ом в `state_seq`, а reader наблюдает их через acquire-load после
+проверки `write_sequence`. Корректность interleaving-ов закреплена Loom-тестами
+`reader_pin_and_writer_overwrite_are_mutually_exclusive` и
+`commit_release_is_visible_after_observe_acquire`.
+
 0 heap allocations в zero-copy hot path доказываются integration test-ом
 `zero_copy_hot_path_does_not_allocate`. Тестовый бинарь устанавливает custom
 global allocator, считает `alloc`, `alloc_zeroed` и `realloc`, прогревает setup
@@ -33,8 +40,9 @@ topic-level futex word в отдельном shared segment-е. Publisher пос
 subscriber повторно проверяет `stream_epoch` и write sequence attached stream-ов,
 поэтому publish между последним `try_recv` и постановкой waiter-а не теряется.
 
-0 syscalls в non-blocking hot path доказываются TypeScript strace regression-скриптом
-`/workspace/scripts/hot-path-syscall-smoke.ts`, который запускается через:
+0 syscalls в non-blocking hot path доказываются переносимым TypeScript
+strace regression-скриптом `workspace/scripts/hot-path-syscall-smoke.ts`.
+Он вычисляет `workspace/src` от собственного расположения и запускается через:
 
 ```bash
 npm run hot-path:syscalls

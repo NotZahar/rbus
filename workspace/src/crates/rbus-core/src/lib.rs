@@ -1,7 +1,4 @@
-//! Internal documentation
-//!
-//! Warning model metadata
-//! Shared memory ABI metadata
+//! Core ids, layouts, versions and warning metadata
 
 pub mod atomic;
 pub mod cache;

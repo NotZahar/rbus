@@ -4,7 +4,7 @@ use rbus_core::atomic::ordering::{
     COUNTER_ORDERING, READER_MASK_UPDATE_ORDERING, SEGMENT_FLAG_OBSERVE_ORDERING,
     SEGMENT_FLAG_UPDATE_ORDERING,
 };
-use rbus_core::constants::{SEGMENT_FLAG_CLOSED, SHARED_MEMORY_ABI_VERSION, SHARED_MEMORY_MAGIC};
+use rbus_core::constants::{SEGMENT_FLAG_CLOSED, STREAM_SEGMENT_ABI_VERSION, STREAM_SEGMENT_MAGIC};
 use rbus_core::ids::{PublisherId, StreamId, SubscriberId, TopicHash};
 use rbus_core::layout::{SegmentHeader, SegmentLayout, SlotHeader, calculate_segment_layout};
 use rbus_core::ring::pin::reader_bit_mask;
@@ -17,6 +17,7 @@ use crate::mmap::MappedRegion;
 
 const COMPONENT_IPC: &str = "rbus-ipc";
 const COUNTER_INCREMENT: u64 = 1;
+const SEGMENT_HEADER_OFFSET: usize = 0;
 
 /// Shared memory ABI metadata
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -54,10 +55,6 @@ pub struct StreamSegmentSnapshot {
     pub flags: u64,
     /// Sequence metadata
     pub write_sequence: u64,
-    /// Futex wake epoch
-    pub wake_epoch: u32,
-    /// Subscriber runtime metadata
-    pub wake_waiters: u32,
     /// Snapshot stream counters
     pub stats: Stats,
 }
@@ -125,7 +122,7 @@ pub fn snapshot_stream_segment(
     subscriber_count: u64,
 ) -> Result<StreamSegmentSnapshot, Warning> {
     let (mapping, layout) = map_stream_segment(file_descriptor, metadata, false)?;
-    let header = segment_header(&mapping);
+    let header = segment_header(&mapping)?;
     let flags = header.flags.load(SEGMENT_FLAG_OBSERVE_ORDERING);
     let write_sequence = header.write_sequence.load(COUNTER_ORDERING);
     let publisher_alive = flags & SEGMENT_FLAG_CLOSED == 0;
@@ -134,9 +131,7 @@ pub fn snapshot_stream_segment(
         abi_version: header.abi_version,
         flags,
         write_sequence,
-        wake_epoch: header.wake_epoch.load(COUNTER_ORDERING),
-        wake_waiters: header.wake_waiters.load(COUNTER_ORDERING),
-        stats: stream_counters(&mapping, layout).snapshot(
+        stats: stream_counters(&mapping, layout)?.snapshot(
             write_sequence,
             subscriber_count,
             publisher_alive,
@@ -150,10 +145,10 @@ pub fn mark_stream_closed(
     metadata: StreamSegmentMetadata,
 ) -> Result<(), Warning> {
     let (mapping, layout) = map_stream_segment(file_descriptor, metadata, true)?;
-    segment_header(&mapping)
+    segment_header(&mapping)?
         .flags
         .fetch_or(SEGMENT_FLAG_CLOSED, SEGMENT_FLAG_UPDATE_ORDERING);
-    stream_counters(&mapping, layout)
+    stream_counters(&mapping, layout)?
         .disconnected_streams
         .fetch_add(COUNTER_INCREMENT, COUNTER_ORDERING);
     Ok(())
@@ -169,7 +164,7 @@ pub fn clear_subscriber_reader_bits(
     let (mapping, layout) = map_stream_segment(file_descriptor, metadata, true)?;
     let mut cleared_count = 0_u64;
     for slot_index in 0..layout.depth {
-        let previous_mask = slot_header(&mapping, layout, slot_index)
+        let previous_mask = slot_header(&mapping, layout, slot_index)?
             .readers_mask
             .fetch_and(!reader_bit, READER_MASK_UPDATE_ORDERING);
         if previous_mask & reader_bit != 0 {
@@ -200,18 +195,18 @@ fn initialize_segment(
         )
     })?;
 
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - daemon_register_publisher_returns_memfd_stream
+    let header_pointer = mapping
+        .typed_pointer::<SegmentHeader>(SEGMENT_HEADER_OFFSET, "initialize_segment::header")?;
+    let counters_pointer = mapping
+        .typed_pointer::<StreamCounters>(layout.counters_offset, "initialize_segment::counters")?;
+
+    // SAFETY: Pointers were bounds and alignment checked against the newly created mapping.
     unsafe {
         core::ptr::write(
-            mapping.as_mutable_pointer().cast::<SegmentHeader>(),
+            header_pointer.as_ptr(),
             SegmentHeader {
-                magic: SHARED_MEMORY_MAGIC,
-                abi_version: SHARED_MEMORY_ABI_VERSION,
+                magic: STREAM_SEGMENT_MAGIC,
+                abi_version: STREAM_SEGMENT_ABI_VERSION,
                 header_size,
                 segment_size: layout.segment_size as u64,
                 stream_id: metadata.stream_id.as_u64(),
@@ -220,32 +215,24 @@ fn initialize_segment(
                 slot_size: layout.slot_size as u64,
                 depth: layout.depth as u64,
                 write_sequence: core::sync::atomic::AtomicU64::new(0),
-                wake_epoch: core::sync::atomic::AtomicU32::new(0),
-                wake_waiters: core::sync::atomic::AtomicU32::new(0),
                 flags: core::sync::atomic::AtomicU64::new(0),
                 counters_offset: layout.counters_offset as u64,
                 slots_offset: layout.slots_offset as u64,
                 payload_offset: layout.payload_offset as u64,
-                reserved: [0; 18],
+                reserved: [0; 19],
             },
         );
-        core::ptr::write(
-            mapping
-                .as_mutable_pointer()
-                .wrapping_add(layout.counters_offset)
-                .cast::<StreamCounters>(),
-            StreamCounters::new(),
-        );
-        for slot_index in 0..layout.depth {
-            core::ptr::write(
-                mapping
-                    .as_mutable_pointer()
-                    .wrapping_add(
-                        layout.slots_offset + slot_index * core::mem::size_of::<SlotHeader>(),
-                    )
-                    .cast::<SlotHeader>(),
-                SlotHeader::new(),
-            );
+        core::ptr::write(counters_pointer.as_ptr(), StreamCounters::new());
+    }
+
+    for slot_index in 0..layout.depth {
+        let slot_pointer = mapping.typed_pointer::<SlotHeader>(
+            slot_offset(layout, slot_index, "initialize_segment::slot_offset")?,
+            "initialize_segment::slot",
+        )?;
+        // SAFETY: The slot pointer was checked for bounds and alignment before writing.
+        unsafe {
+            core::ptr::write(slot_pointer.as_ptr(), SlotHeader::new());
         }
     }
 
@@ -257,10 +244,9 @@ fn validate_segment_header(
     metadata: StreamSegmentMetadata,
     layout: SegmentLayout,
 ) -> Result<(), Warning> {
-    // SAFETY: Required invariants are upheld
-    let header = unsafe { &*mapping.as_pointer().cast::<SegmentHeader>() };
-    let valid = header.magic == SHARED_MEMORY_MAGIC
-        && header.abi_version == SHARED_MEMORY_ABI_VERSION
+    let header = segment_header(mapping)?;
+    let valid = header.magic == STREAM_SEGMENT_MAGIC
+        && header.abi_version == STREAM_SEGMENT_ABI_VERSION
         && header.segment_size == metadata.segment_size as u64
         && header.stream_id == metadata.stream_id.as_u64()
         && header.publisher_id == metadata.publisher_id.as_u64()
@@ -282,33 +268,46 @@ fn validate_segment_header(
     }
 }
 
-fn segment_header(mapping: &MappedRegion) -> &SegmentHeader {
-    // SAFETY: Required invariants are upheld
-    unsafe { &*mapping.as_pointer().cast::<SegmentHeader>() }
+fn segment_header(mapping: &MappedRegion) -> Result<&SegmentHeader, Warning> {
+    let pointer =
+        mapping.typed_pointer::<SegmentHeader>(SEGMENT_HEADER_OFFSET, "segment_header")?;
+    // SAFETY: The pointer is within the live mapping and aligned for SegmentHeader.
+    Ok(unsafe { pointer.as_ref() })
 }
 
-fn stream_counters(mapping: &MappedRegion, layout: SegmentLayout) -> &StreamCounters {
-    // SAFETY: Required invariants are upheld
-    unsafe {
-        &*mapping
-            .as_pointer()
-            .wrapping_add(layout.counters_offset)
-            .cast::<StreamCounters>()
-    }
+fn stream_counters(
+    mapping: &MappedRegion,
+    layout: SegmentLayout,
+) -> Result<&StreamCounters, Warning> {
+    let pointer =
+        mapping.typed_pointer::<StreamCounters>(layout.counters_offset, "stream_counters")?;
+    // SAFETY: The pointer is within a validated stream mapping and aligned for StreamCounters.
+    Ok(unsafe { pointer.as_ref() })
 }
 
-fn slot_header(mapping: &MappedRegion, layout: SegmentLayout, slot_index: usize) -> &SlotHeader {
-    // SAFETY: Required invariants are upheld
-    unsafe {
-        &*mapping
-            .as_pointer()
-            .wrapping_add(
-                layout
-                    .slots_offset
-                    .saturating_add(slot_index.saturating_mul(core::mem::size_of::<SlotHeader>())),
-            )
-            .cast::<SlotHeader>()
-    }
+fn slot_header(
+    mapping: &MappedRegion,
+    layout: SegmentLayout,
+    slot_index: usize,
+) -> Result<&SlotHeader, Warning> {
+    let pointer = mapping.typed_pointer::<SlotHeader>(
+        slot_offset(layout, slot_index, "slot_header::offset")?,
+        "slot_header",
+    )?;
+    // SAFETY: The pointer is within a validated stream mapping and aligned for SlotHeader.
+    Ok(unsafe { pointer.as_ref() })
+}
+
+fn slot_offset(
+    layout: SegmentLayout,
+    slot_index: usize,
+    operation: &'static str,
+) -> Result<usize, Warning> {
+    let slot_headers_offset = slot_index
+        .checked_mul(core::mem::size_of::<SlotHeader>())
+        .and_then(|offset| layout.slots_offset.checked_add(offset))
+        .ok_or_else(|| Warning::new(WarningCode::ResourceLimit, COMPONENT_IPC, operation))?;
+    Ok(slot_headers_offset)
 }
 
 fn memfd_name(publisher_id: PublisherId, stream_id: StreamId) -> String {

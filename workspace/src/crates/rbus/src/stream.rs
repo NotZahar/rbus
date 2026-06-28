@@ -1,9 +1,12 @@
+use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use rbus_core::atomic::ordering::{
     COUNTER_ORDERING, READER_MASK_UPDATE_ORDERING, READER_OBSERVE_ORDERING,
-    SEGMENT_FLAG_OBSERVE_ORDERING, SLOT_PROTOCOL_ORDERING, WRITER_COMMIT_ORDERING,
+    READER_PIN_FAILURE_ORDERING, READER_PIN_ORDERING, READER_SLOT_OBSERVE_ORDERING,
+    SEGMENT_FLAG_OBSERVE_ORDERING, WRITER_CLAIM_FAILURE_ORDERING, WRITER_CLAIM_ORDERING,
+    WRITER_COMMIT_ORDERING, WRITER_STATE_UPDATE_ORDERING,
 };
 use rbus_core::constants::SLOT_WRITER_CLAIM_BIT;
 use rbus_core::ids::{PublisherId, StreamId, SubscriberId, TopicHash};
@@ -21,6 +24,7 @@ use rbus_ipc::mmap::MappedRegion;
 use rbus_ipc::stream_segment::{StreamSegmentMetadata, map_stream_segment};
 
 const COMPONENT_RBUS: &str = "rbus";
+const SEGMENT_HEADER_OFFSET: usize = 0;
 
 pub(crate) struct StreamInner {
     stream_id: StreamId,
@@ -28,7 +32,8 @@ pub(crate) struct StreamInner {
     topic_hash: TopicHash,
     created_generation: u64,
     layout: SegmentLayout,
-    mapping: MappedRegion,
+    memory: StreamMemory,
+    _mapping: MappedRegion,
     subscriber_count: core::sync::atomic::AtomicU64,
     loan_in_progress: AtomicBool,
 }
@@ -41,6 +46,7 @@ impl StreamInner {
         initial_subscriber_count: u64,
     ) -> Result<Arc<Self>, Warning> {
         let (mapping, layout) = map_stream_segment(file_descriptor, metadata, true)?;
+        let memory = StreamMemory::new(&mapping, layout)?;
 
         Ok(Arc::new(Self {
             stream_id: metadata.stream_id,
@@ -48,7 +54,8 @@ impl StreamInner {
             topic_hash: metadata.topic_hash,
             created_generation,
             layout,
-            mapping,
+            memory,
+            _mapping: mapping,
             subscriber_count: core::sync::atomic::AtomicU64::new(initial_subscriber_count),
             loan_in_progress: AtomicBool::new(false),
         }))
@@ -144,8 +151,8 @@ impl StreamInner {
             .compare_exchange(
                 0,
                 SLOT_WRITER_CLAIM_BIT,
-                SLOT_PROTOCOL_ORDERING,
-                SLOT_PROTOCOL_ORDERING,
+                WRITER_CLAIM_ORDERING,
+                WRITER_CLAIM_FAILURE_ORDERING,
             )
             .is_err()
         {
@@ -164,7 +171,7 @@ impl StreamInner {
         }
 
         slot.state_seq
-            .store(encode_writing_state(sequence), SLOT_PROTOCOL_ORDERING);
+            .store(encode_writing_state(sequence), WRITER_STATE_UPDATE_ORDERING);
 
         Ok(LoanReservation {
             stream: Arc::clone(self),
@@ -200,15 +207,16 @@ impl StreamInner {
             (*slot_pointer).flags = 0;
             (*slot_pointer).timestamp_ns = timestamp_ns;
         }
-        self.slot_header(slot_index)
-            .state_seq
-            .store(encode_committed_state(sequence), SLOT_PROTOCOL_ORDERING);
+        self.slot_header(slot_index).state_seq.store(
+            encode_committed_state(sequence),
+            WRITER_STATE_UPDATE_ORDERING,
+        );
         self.segment_header()
             .write_sequence
             .store(sequence.next().as_u64(), WRITER_COMMIT_ORDERING);
         self.slot_header(slot_index)
             .readers_mask
-            .fetch_and(!SLOT_WRITER_CLAIM_BIT, SLOT_PROTOCOL_ORDERING);
+            .fetch_and(!SLOT_WRITER_CLAIM_BIT, READER_MASK_UPDATE_ORDERING);
         self.stream_counters()
             .published_messages
             .fetch_add(1, COUNTER_ORDERING);
@@ -229,10 +237,10 @@ impl StreamInner {
         }
         self.slot_header(slot_index)
             .state_seq
-            .store(0, SLOT_PROTOCOL_ORDERING);
+            .store(0, WRITER_STATE_UPDATE_ORDERING);
         self.slot_header(slot_index)
             .readers_mask
-            .fetch_and(!SLOT_WRITER_CLAIM_BIT, SLOT_PROTOCOL_ORDERING);
+            .fetch_and(!SLOT_WRITER_CLAIM_BIT, READER_MASK_UPDATE_ORDERING);
         self.loan_in_progress.store(false, Ordering::Release);
     }
 
@@ -265,7 +273,7 @@ impl StreamInner {
 
         let slot_index = expected_sequence.slot_index(self.layout.depth);
         let slot = self.slot_header(slot_index);
-        let state_sequence = slot.state_seq.load(SLOT_PROTOCOL_ORDERING);
+        let state_sequence = slot.state_seq.load(READER_SLOT_OBSERVE_ORDERING);
         if !is_committed_state(state_sequence) {
             return Ok(ReadAttempt::Empty);
         }
@@ -286,7 +294,7 @@ impl StreamInner {
         }
 
         let reader_bit = reader_bit_mask(subscriber_id)?;
-        let mut readers_mask = slot.readers_mask.load(SLOT_PROTOCOL_ORDERING);
+        let mut readers_mask = slot.readers_mask.load(READER_SLOT_OBSERVE_ORDERING);
         loop {
             if readers_mask & SLOT_WRITER_CLAIM_BIT != 0 {
                 return Ok(ReadAttempt::Empty);
@@ -294,17 +302,17 @@ impl StreamInner {
             match slot.readers_mask.compare_exchange(
                 readers_mask,
                 readers_mask | reader_bit,
-                SLOT_PROTOCOL_ORDERING,
-                SLOT_PROTOCOL_ORDERING,
+                READER_PIN_ORDERING,
+                READER_PIN_FAILURE_ORDERING,
             ) {
                 Ok(_) => break,
                 Err(observed_readers_mask) => readers_mask = observed_readers_mask,
             }
         }
-        let state_after_pin = slot.state_seq.load(SLOT_PROTOCOL_ORDERING);
+        let state_after_pin = slot.state_seq.load(READER_SLOT_OBSERVE_ORDERING);
         if state_after_pin != state_sequence {
             slot.readers_mask
-                .fetch_and(!reader_bit, SLOT_PROTOCOL_ORDERING);
+                .fetch_and(!reader_bit, READER_MASK_UPDATE_ORDERING);
             if is_committed_state(state_after_pin) {
                 let observed_sequence_after_pin = decode_sequence(state_after_pin);
                 if observed_sequence_after_pin > expected_sequence {
@@ -367,59 +375,92 @@ impl StreamInner {
     }
 
     fn segment_header(&self) -> &SegmentHeader {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - loaned_publish_makes_payload_visible_to_subscriber
-        unsafe { &*self.mapping.as_pointer().cast::<SegmentHeader>() }
+        // SAFETY: The pointer was checked once during StreamInner attach.
+        unsafe { self.memory.header.as_ref() }
     }
 
     fn stream_counters(&self) -> &StreamCounters {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - stream_counters_snapshot_reads_values
-        unsafe {
-            &*self
-                .mapping
-                .as_pointer()
-                .wrapping_add(self.layout.counters_offset)
-                .cast::<StreamCounters>()
-        }
+        // SAFETY: The pointer was checked once during StreamInner attach.
+        unsafe { self.memory.counters.as_ref() }
     }
 
     fn slot_header(&self, slot_index: usize) -> &SlotHeader {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - message_ref_drop_releases_pinned_slot
+        // SAFETY: Callers derive slot_index from Sequence::slot_index or a bounded layout loop.
         unsafe { &*self.slot_header_pointer(slot_index) }
     }
 
     fn slot_header_pointer(&self, slot_index: usize) -> *mut SlotHeader {
-        self.mapping
-            .as_mutable_pointer()
-            .wrapping_add(
-                self.layout
-                    .slots_offset
-                    .saturating_add(slot_index.saturating_mul(core::mem::size_of::<SlotHeader>())),
-            )
-            .cast::<SlotHeader>()
+        // SAFETY: StreamMemory::new checked the full slot header range for this layout.
+        unsafe { self.memory.slots.as_ptr().add(slot_index) }
     }
 
     fn payload_pointer(&self, slot_index: usize) -> *mut u8 {
-        self.mapping.as_mutable_pointer().wrapping_add(
-            self.layout
-                .payload_offset
-                .saturating_add(slot_index.saturating_mul(self.layout.payload_stride)),
-        )
+        let payload_offset = slot_index * self.layout.payload_stride;
+        // SAFETY: StreamMemory::new checked the full payload range for this layout.
+        unsafe { self.memory.payload.as_ptr().add(payload_offset) }
     }
+}
+
+struct StreamMemory {
+    header: NonNull<SegmentHeader>,
+    counters: NonNull<StreamCounters>,
+    slots: NonNull<SlotHeader>,
+    payload: NonNull<u8>,
+}
+
+// SAFETY: StreamMemory pointers are checked during attach, remain valid while StreamInner owns
+// the MappedRegion, and concurrent access is synchronized by the shared-memory atomics.
+unsafe impl Send for StreamMemory {}
+
+// SAFETY: StreamMemory exposes shared-memory metadata and payload pointers whose concurrent access
+// is governed by the slot protocol atomics, not by Rust references.
+unsafe impl Sync for StreamMemory {}
+
+impl StreamMemory {
+    fn new(mapping: &MappedRegion, layout: SegmentLayout) -> Result<Self, Warning> {
+        let slot_headers_size = checked_region_size(
+            core::mem::size_of::<SlotHeader>(),
+            layout.depth,
+            "StreamMemory::slot_headers_size",
+        )?;
+        let payload_size = checked_region_size(
+            layout.payload_stride,
+            layout.depth,
+            "StreamMemory::payload_size",
+        )?;
+        let header = mapping
+            .typed_pointer::<SegmentHeader>(SEGMENT_HEADER_OFFSET, "StreamMemory::header")?;
+        let counters = mapping
+            .typed_pointer::<StreamCounters>(layout.counters_offset, "StreamMemory::counters")?;
+        let slots =
+            mapping.typed_pointer::<SlotHeader>(layout.slots_offset, "StreamMemory::slots")?;
+        mapping.byte_pointer(
+            layout.slots_offset,
+            slot_headers_size,
+            "StreamMemory::slots_range",
+        )?;
+        let payload = mapping.byte_pointer(
+            layout.payload_offset,
+            payload_size,
+            "StreamMemory::payload_range",
+        )?;
+        Ok(Self {
+            header,
+            counters,
+            slots,
+            payload,
+        })
+    }
+}
+
+fn checked_region_size(
+    element_size: usize,
+    element_count: usize,
+    operation: &'static str,
+) -> Result<usize, Warning> {
+    element_size
+        .checked_mul(element_count)
+        .ok_or_else(|| Warning::new(WarningCode::ResourceLimit, COMPONENT_RBUS, operation))
 }
 
 pub(crate) struct LoanReservation {
@@ -451,7 +492,7 @@ pub(crate) enum ReadAttempt {
 
 #[cfg(test)]
 mod tests {
-    use rbus_core::constants::{SHARED_MEMORY_ABI_VERSION, SHARED_MEMORY_MAGIC};
+    use rbus_core::constants::{STREAM_SEGMENT_ABI_VERSION, STREAM_SEGMENT_MAGIC};
     use rbus_core::ids::{PublisherId, StreamId, TopicHash};
     use rbus_core::warning::{Warning, WarningCode};
     use rbus_ipc::stream_segment::{create_stream_segment, mark_stream_closed};
@@ -475,25 +516,13 @@ mod tests {
         )?;
         let header = stream.segment_header();
 
-        assert_eq!(header.magic, SHARED_MEMORY_MAGIC);
-        assert_eq!(header.abi_version, SHARED_MEMORY_ABI_VERSION);
+        assert_eq!(header.magic, STREAM_SEGMENT_MAGIC);
+        assert_eq!(header.abi_version, STREAM_SEGMENT_ABI_VERSION);
         assert_eq!(header.stream_id, 13);
         assert_eq!(header.publisher_id, 7);
         assert_eq!(header.topic_hash, 11);
         assert_eq!(header.slot_size, 256);
         assert_eq!(header.depth, 8);
-        assert_eq!(
-            header
-                .wake_epoch
-                .load(core::sync::atomic::Ordering::Relaxed),
-            0
-        );
-        assert_eq!(
-            header
-                .wake_waiters
-                .load(core::sync::atomic::Ordering::Relaxed),
-            0
-        );
         assert_eq!(
             header.counters_offset as usize,
             stream.layout.counters_offset

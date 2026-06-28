@@ -2,8 +2,7 @@
 
 import { spawnSync } from "node:child_process";
 
-const sourceRoot = "/workspace/src";
-const scriptsRoot = "/workspace/scripts";
+import { workspacePaths } from "./workspace-paths.ts";
 
 class ScriptError extends Error {
   readonly exitCode: number;
@@ -17,7 +16,7 @@ class ScriptError extends Error {
 
 function runCommand(command: string, commandArguments: string[]) {
   const result = spawnSync(command, commandArguments, {
-    cwd: sourceRoot,
+    cwd: workspacePaths.sourceRoot,
     encoding: "utf8",
     stdio: "inherit",
   });
@@ -36,8 +35,8 @@ function requireNoArguments(argumentsList: string[]) {
 function runStrace() {
   runCommand("strace", ["--version"]);
   runCommand("cargo", ["build", "-p", "rbusd", "-p", "rbus-bench"]);
-  runCommand("node", [`${scriptsRoot}/hot-path-syscall-smoke.ts`]);
-  runCommand(`${sourceRoot}/target/debug/rbus-bench`, [
+  runCommand("node", [workspacePaths.hotPathSyscallSmokeScript]);
+  runCommand(workspacePaths.rbusBenchBinary, [
     "--suite",
     "--matrix-smoke",
     "--messages",

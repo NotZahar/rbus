@@ -1,5 +1,6 @@
 //! Linux IPC metadata
 
+use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
 use std::os::fd::RawFd;
 
@@ -8,6 +9,8 @@ use rbus_core::warning::{Warning, WarningCode};
 use crate::errno::warning_from_errno;
 
 const COMPONENT_IPC: &str = "rbus-ipc";
+const MINIMUM_FILE_DESCRIPTOR: RawFd = 0;
+const EMPTY_LENGTH: usize = 0;
 
 /// Mapped shared memory region
 #[derive(Debug)]
@@ -23,7 +26,7 @@ impl MappedRegion {
         length: usize,
         writable: bool,
     ) -> Result<Self, Warning> {
-        if raw_file_descriptor < 0 || length == 0 {
+        if raw_file_descriptor < MINIMUM_FILE_DESCRIPTOR || length == EMPTY_LENGTH {
             return Err(Warning::new(
                 WarningCode::InvalidConfig,
                 COMPONENT_IPC,
@@ -81,14 +84,50 @@ impl MappedRegion {
         self.length
     }
 
-    /// Returns a value
-    pub const fn as_pointer(&self) -> *const u8 {
-        self.pointer.as_ptr()
+    /// Linux IPC metadata
+    pub fn typed_pointer<T>(
+        &self,
+        offset: usize,
+        operation: &'static str,
+    ) -> Result<NonNull<T>, Warning> {
+        self.byte_pointer(offset, size_of::<T>(), operation)
+            .and_then(|pointer| {
+                if (pointer.as_ptr().cast::<T>() as usize).is_multiple_of(align_of::<T>()) {
+                    Ok(pointer.cast())
+                } else {
+                    Err(Warning::new(
+                        WarningCode::SegmentAbiMismatch,
+                        COMPONENT_IPC,
+                        operation,
+                    ))
+                }
+            })
     }
 
-    /// Returns a value
-    pub const fn as_mutable_pointer(&self) -> *mut u8 {
-        self.pointer.as_ptr()
+    /// Linux IPC metadata
+    pub fn byte_pointer(
+        &self,
+        offset: usize,
+        length: usize,
+        operation: &'static str,
+    ) -> Result<NonNull<u8>, Warning> {
+        let end = offset
+            .checked_add(length)
+            .ok_or_else(|| Warning::new(WarningCode::ResourceLimit, COMPONENT_IPC, operation))?;
+        if length == EMPTY_LENGTH || end > self.length {
+            return Err(Warning::new(
+                WarningCode::SegmentAbiMismatch,
+                COMPONENT_IPC,
+                operation,
+            ));
+        }
+        NonNull::new(self.pointer.as_ptr().wrapping_add(offset)).ok_or_else(|| {
+            Warning::new(
+                WarningCode::InternalInvariantWarning,
+                COMPONENT_IPC,
+                operation,
+            )
+        })
     }
 
     /// Returns a value

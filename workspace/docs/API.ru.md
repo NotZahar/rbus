@@ -1,5 +1,9 @@
 # API rbus
 
+Текущая версия public API берётся из workspace package version и указана в
+[Версии API/ABI](VERSIONS.ru.md). Изменение публичных типов или их semantics
+должно сопровождаться обновлением этого контракта.
+
 Публичный API ограничен типами:
 
 - `Bus`

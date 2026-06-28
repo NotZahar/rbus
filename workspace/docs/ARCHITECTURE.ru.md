@@ -5,6 +5,8 @@ rbus разделён на public API, control plane и data plane.
 Public API живёт в crate `rbus` и экспортирует только минимальный набор типов.
 Control plane обслуживается `rbusd` и бинарным Unix `SOCK_SEQPACKET` protocol.
 Data plane строится вокруг per-publisher stream и fixed-size SPMC ring.
+Номера public API, control protocol, stream segment ABI и topic wait segment ABI
+зафиксированы в [Версии API/ABI](VERSIONS.ru.md).
 
 Payload не передаётся через daemon. После setup/attach non-blocking publish и
 try_recv не должны делать syscalls или heap allocations в steady state.

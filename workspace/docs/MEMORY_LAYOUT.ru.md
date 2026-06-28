@@ -7,13 +7,20 @@
 3. `SlotHeader[depth]`
 4. `PayloadSlot[depth]`
 
+Актуальные номера контрактов перечислены в
+[Версии API/ABI](VERSIONS.ru.md): stream segment ABI сейчас `4`, topic wait
+segment ABI сейчас `1`.
+
 `state_seq` кодирует sequence и writing bit: committed state хранит `sequence << 1`,
 writing state хранит `(sequence << 1) | 1`.
 
-Writer публикует payload и metadata до release-store в `state_seq`. Reader читает
-`state_seq`, CAS-ом выставляет свой bit в `readers_mask`, затем повторно
-проверяет `state_seq`. Старший bit `readers_mask` зарезервирован под writer
-claim, поэтому stream поддерживает до 63 subscriber reader bits.
+Writer публикует payload и metadata до release-store в `state_seq`. Reader
+читает `write_sequence`/`state_seq` через acquire-load, CAS-ом выставляет свой
+bit в `readers_mask`, затем повторно проверяет `state_seq`. Slot protocol не
+использует `SeqCst`: writer claim и reader pin используют acquire/release CAS,
+а commit виден через release-store в `state_seq` и `write_sequence`. Старший
+bit `readers_mask` зарезервирован под writer claim, поэтому stream поддерживает
+до 63 subscriber reader bits.
 `SlotHeader.timestamp_ns` заполняется monotonic timestamp-ом на commit path до
 release-store в `state_seq`; после успешного pin reader читает тот же metadata
 snapshot через `MessageRef::timestamp_ns()`.
@@ -23,21 +30,23 @@ claim bit, затем переводит `state_seq` в writing state. Claim bit
 до commit или rollback, поэтому reader не может закрепиться за slot-ом, пока
 publisher получил mutable payload.
 
-`SegmentHeader.flags` является `AtomicU64`. Начиная с ABI v2 bit
-`SEGMENT_FLAG_CLOSED` помечает stream закрытым после смерти publisher-а или
+`SegmentHeader.flags` является `AtomicU64`. Начиная со stream segment ABI `2`
+bit `SEGMENT_FLAG_CLOSED` помечает stream закрытым после смерти publisher-а или
 `UNREGISTER`. Уже attached subscribers читают этот flag из shared memory без
 control-plane syscall; `Stats.publisher_alive` становится `false`, а
 `StreamCounters.disconnected_streams` увеличивается daemon-ом при закрытии.
 
-В ABI v3 `SegmentHeader` также содержит `wake_epoch` и `wake_waiters` для
-совместимости layout-а с blocking wait evolution. Production blocking receive
-использует отдельный topic-level wait segment размером в одну cache line:
-`TopicWaitHeader { wake_epoch: AtomicU32, stream_epoch: AtomicU32,
-wake_waiters_mask: AtomicU64, reserved }`. `wake_epoch` меняется при publish и
-stream-added wake только если `wake_waiters_mask != 0`, а `stream_epoch` только
-при регистрации нового publisher stream-а. Этот segment создаётся daemon-ом на
-topic, передаётся publisher/subscriber через `SCM_RIGHTS` и mmap-ится
-`MAP_SHARED`.
+В stream segment ABI `4` stream-level поля `wake_epoch` и `wake_waiters` удалены
+из `SegmentHeader`: они не участвовали в data plane и дублировали отдельный
+topic-level wait segment. Blocking receive использует shared segment размером в
+одну cache line с topic wait ABI `1`:
+`TopicWaitHeader { magic: u64, abi_version: u32, reserved_header: u32,
+wake_epoch: AtomicU32, stream_epoch: AtomicU32, wake_waiters_mask: AtomicU64,
+reserved }`. `wake_epoch` меняется при publish и stream-added wake только если
+`wake_waiters_mask != 0`, а `stream_epoch` только при регистрации нового
+publisher stream-а. Этот segment создаётся daemon-ом на topic, передаётся
+publisher/subscriber через `SCM_RIGHTS` и mmap-ится `MAP_SHARED`. При attach
+проверяются `magic` и `abi_version`; mismatch завершает operation без fallback-а.
 
 Cleanup умершего subscriber-а выполняется вне hot path: `rbusd` mmap-ит
 daemon-owned FD stream-а и очищает bit этого `subscriber_id` во всех
@@ -48,4 +57,8 @@ Layout инициализируется в `rbus-ipc::stream_segment` на ст�
 создании daemon-owned memfd. Клиентский `rbus::StreamInner` attach-ит полученный
 FD через `mmap MAP_SHARED` и проверяет `SegmentHeader.magic`, `abi_version`,
 `stream_id`, `publisher_id`, `topic_hash`, `slot_size`, `depth` и offsets на
-boundary attach-а. Это покрыто тестом `stream_initializes_shared_memory_segment_header`.
+boundary attach-а. После attach hot path использует cached typed pointers,
+полученные через checked projection `MappedRegion`; повторных mmap layout
+проверок в `loan`/`publish`/`try_recv` нет. Это покрыто тестами
+`stream_initializes_shared_memory_segment_header` и
+`mmap_region_checks_typed_projection_bounds_and_alignment`.

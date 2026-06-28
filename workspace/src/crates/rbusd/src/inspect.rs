@@ -90,7 +90,7 @@ fn inspect_text(
                 concat!(
                     "\nstream stream_id={} publisher_id={} topic_hash={} generation={} ",
                     "segment_size={} slot_size={} depth={} abi={} flags={} ",
-                    "write_sequence={} wake_epoch={} wake_waiters={}"
+                    "write_sequence={}"
                 ),
                 stream.metadata.stream_id,
                 stream.metadata.publisher_id,
@@ -101,9 +101,7 @@ fn inspect_text(
                 stream.metadata.depth,
                 stream_snapshot.abi_version,
                 stream_snapshot.flags,
-                stream_snapshot.write_sequence,
-                stream_snapshot.wake_epoch,
-                stream_snapshot.wake_waiters
+                stream_snapshot.write_sequence
             ));
         }
     }
@@ -219,8 +217,7 @@ fn append_streams_json(
                 concat!(
                     "{{\"stream_id\":{},\"publisher_id\":{},\"topic_hash\":{},",
                     "\"generation\":{},\"segment_size\":{},\"slot_size\":{},\"depth\":{},",
-                    "\"abi\":{},\"flags\":{},\"write_sequence\":{},",
-                    "\"wake_epoch\":{},\"wake_waiters\":{}}}"
+                    "\"abi\":{},\"flags\":{},\"write_sequence\":{}}}"
                 ),
                 stream.metadata.stream_id,
                 stream.metadata.publisher_id,
@@ -231,9 +228,7 @@ fn append_streams_json(
                 stream.metadata.depth,
                 stream_snapshot.abi_version,
                 stream_snapshot.flags,
-                stream_snapshot.write_sequence,
-                stream_snapshot.wake_epoch,
-                stream_snapshot.wake_waiters
+                stream_snapshot.write_sequence
             ));
         }
     }

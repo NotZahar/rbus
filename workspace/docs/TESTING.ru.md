@@ -36,6 +36,11 @@ npm run bench:strace
 hot-path syscall smoke и короткий suite pass, где `syscalls/message` снимается
 через `strace -c`.
 
+Benchmark TypeScript-скрипты не содержат абсолютный container source path:
+корень `workspace/src` вычисляется от расположения файла
+`workspace/scripts/workspace-paths.ts`. Это фиксируется тестом
+`benchmark_scripts_do_not_hardcode_container_source_root`.
+
 Lint policy:
 
 - `cargo clippy --workspace --all-targets --all-features -- -D warnings`;
@@ -46,8 +51,10 @@ Lint policy:
 Loom/model tests находятся в `crates/rbus-core/tests/atomic_protocol_model_tests.rs`.
 Они перебирают interleaving-и atomic data plane protocol-ов: reader pin против
 writer overwrite, commit `Release` против observe `Acquire`, cleanup/drop против
-одного reader bit. Эти тесты запускаются обычным `cargo test --workspace
---all-features` и не требуют отдельного feature flag.
+одного reader bit. Тест `slot_protocol_orderings_do_not_require_global_seq_cst`
+дополнительно фиксирует, что slot protocol не возвращается к `SeqCst`. Эти
+тесты запускаются обычным `cargo test --workspace --all-features` и не требуют
+отдельного feature flag.
 
 Regression suite `crates/rbus/tests/cross_process_data_plane_tests.rs`
 поднимает `rbusd`, publishers и subscribers как разные OS process-ы; parent
@@ -107,14 +114,16 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | Binary control frame codec | `crates/rbus-ipc/src/control/codec.rs` | `crates/rbus-ipc/tests/control_codec_tests.rs` |
 | HELLO client header | `crates/rbus-ipc/src/control/client.rs` | `crates/rbus-ipc/tests/control_codec_tests.rs` |
 | `memfd_create` sizing | `crates/rbus-ipc/src/memfd.rs` | `crates/rbus-ipc/tests/memfd_tests.rs` |
-| `mmap MAP_SHARED` | `crates/rbus-ipc/src/mmap.rs` | `crates/rbus-ipc/tests/mmap_tests.rs` |
+| `mmap MAP_SHARED` и checked typed projection | `crates/rbus-ipc/src/mmap.rs` | `crates/rbus-ipc/tests/mmap_tests.rs` |
 | `SCM_RIGHTS` FD passing и seqpacket framing | `crates/rbus-ipc/src/{scm_rights.rs,unix_socket.rs,control/io.rs}` | `crates/rbus-ipc/tests/scm_rights_tests.rs` |
 | `futex` wake/warning path | `crates/rbus-ipc/src/futex.rs` | `crates/rbus-ipc/tests/futex_tests.rs` |
 | Topic wait mask не пишет wake epoch без waiters | `crates/rbus-ipc/src/topic_wait.rs` | `crates/rbus-ipc/tests/topic_wait_tests.rs` |
 | WarningCode coverage catalog | `crates/rbus-core/src/warning.rs` | `every_warning_code_has_reproducible_warning_path_coverage` |
 | IPC warning paths и state checks | `crates/rbus-ipc/src/{control,futex,mmap,permissions,stream_segment}.rs` | `crates/rbus-ipc/tests/warning_path_tests.rs` |
 | Commit timestamp metadata | `crates/rbus/src/stream.rs` | `loaned_publish_makes_payload_visible_to_subscriber` |
-| mmap-backed stream header | `crates/rbus/src/stream.rs` | `stream_initializes_shared_memory_segment_header` |
+| Version contract для public API, control protocol, stream ABI и topic wait ABI | `crates/rbus-core/src/constants.rs`, `docs/VERSIONS.ru.md` | `api_and_abi_versions_are_centrally_synced` |
+| mmap-backed stream header и stream segment ABI v4 без stream wake fields | `crates/rbus/src/stream.rs`, `crates/rbus-core/src/layout/segment.rs` | `stream_initializes_shared_memory_segment_header`, `segment_header_v4_has_no_stream_wake_fields_between_sequence_and_flags` |
+| Topic wait segment ABI v1 с magic/version header | `crates/rbus-ipc/src/topic_wait.rs` | `topic_wait_segment_header_exposes_current_abi`, `topic_wait_segment_rejects_wrong_abi_header` |
 | Data-plane warning counters/state | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `crates/rbus/tests/warning_path_tests.rs`, `disconnected_warning_path_increments_total_on_closed_stream` |
 | Atomic slot protocols | `crates/rbus-core/src/atomic/ordering.rs`, `crates/rbus/src/stream.rs` | `crates/rbus-core/tests/atomic_protocol_model_tests.rs` |
 | Gap handling продвигает subscriber cursor | `crates/rbus/src/{stream.rs,subscriber.rs}` | `subscriber_cursor_moves_to_oldest_available_message_after_gap_warning` |
@@ -123,7 +132,7 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | 0 syscalls в non-blocking hot path | `crates/rbus-bench/src/hot_path_syscall.rs` | `workspace/scripts/hot-path-syscall-smoke.ts` |
 | Multi-process benchmark suite smoke | `crates/rbus-bench/src/{suite.rs,worker.rs}` | `bench_suite_matrix_smoke_outputs_csv` |
 | Benchmark regression gates | `crates/rbus-bench/src/baseline.rs` | `full_baseline_entry_allows_matching_result`, `baseline_gate_rejects_latency_regression` |
-| Benchmark reference/perf/strace scripts | `workspace/scripts/benchmark-{reference,perf,strace}.ts` | `benchmark_reference_perf_strace_scripts_exist` |
+| Benchmark reference/perf/strace scripts | `workspace/scripts/benchmark-{reference,perf,strace}.ts`, `workspace/scripts/workspace-paths.ts` | `benchmark_reference_perf_strace_scripts_exist`, `benchmark_scripts_do_not_hardcode_container_source_root` |
 | Benchmark recv_timeout warning path | `crates/rbus-bench/src/worker.rs` | `bench_worker_recv_timeout_warning_path_is_fatal` |
 | Local IPC benchmark baselines | `crates/rbus-bench/src/transports/{baseline_ipc.rs,baseline_paths.rs,posix_queue.rs}` | `bench_suite_matrix_smoke_outputs_csv` |
 | Cross-process rbus data plane | `crates/rbus/src/control.rs`, `crates/rbusd/src/registry.rs` | `crates/rbus/tests/cross_process_data_plane_tests.rs` |

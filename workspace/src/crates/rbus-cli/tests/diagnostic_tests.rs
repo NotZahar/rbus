@@ -6,7 +6,10 @@ use std::thread;
 use std::time::Duration;
 
 use rbus::{Bus, Publisher, Subscriber, TopicConfig, WarningCode};
-use rbus_core::constants::MAX_SEGMENT_SIZE;
+use rbus_core::constants::{
+    CONTROL_PROTOCOL_VERSION, MAX_SEGMENT_SIZE, RBUS_API_VERSION, STREAM_SEGMENT_ABI_VERSION,
+    TOPIC_WAIT_ABI_VERSION,
+};
 use rbus_ipc::control::client::request_control_frame;
 use rbus_ipc::control::opcode::Opcode;
 use rbus_ipc::unix_socket::default_socket_path;
@@ -138,6 +141,26 @@ fn every_cli_command_json_output_is_valid() {
             assert_eq!(
                 value.get("socket_directory_mode").and_then(Value::as_u64),
                 Some(EXPECTED_DIRECTORY_MODE)
+            );
+            assert_eq!(
+                value.get("api_version").and_then(Value::as_str),
+                Some(RBUS_API_VERSION)
+            );
+            assert_eq!(
+                value
+                    .get("control_protocol_version")
+                    .and_then(Value::as_u64),
+                Some(u64::from(CONTROL_PROTOCOL_VERSION))
+            );
+            assert_eq!(
+                value
+                    .get("stream_segment_abi_version")
+                    .and_then(Value::as_u64),
+                Some(u64::from(STREAM_SEGMENT_ABI_VERSION))
+            );
+            assert_eq!(
+                value.get("topic_wait_abi_version").and_then(Value::as_u64),
+                Some(u64::from(TOPIC_WAIT_ABI_VERSION))
             );
             assert_eq!(value.get("mmap").and_then(Value::as_bool), Some(true));
             assert_eq!(value.get("scm_rights").and_then(Value::as_bool), Some(true));

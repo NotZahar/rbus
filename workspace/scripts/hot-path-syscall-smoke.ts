@@ -5,11 +5,12 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
+import { workspacePaths } from "./workspace-paths.ts";
+
 const parseStatusMissingBegin = 10;
 const parseStatusMissingEnd = 11;
 const parseStatusUnterminatedInterval = 12;
 const parseStatusSyscallsFound = 13;
-const sourceRoot = "/workspace/src";
 const operations = ["publish", "try-recv"] as const;
 
 type Operation = (typeof operations)[number];
@@ -26,7 +27,7 @@ class ScriptError extends Error {
 
 function runCommand(command: string, commandArguments: string[], options = { captureStdout: false }) {
   const result = spawnSync(command, commandArguments, {
-    cwd: sourceRoot,
+    cwd: workspacePaths.sourceRoot,
     encoding: "utf8",
     stdio: options.captureStdout ? ["ignore", "pipe", "pipe"] : "inherit",
   });
@@ -59,7 +60,7 @@ function runProbe(operation: Operation, temporaryDirectory: string) {
       "--trace=all",
       `--output=${traceFile}`,
       "--",
-      `${sourceRoot}/target/debug/rbus-bench`,
+      workspacePaths.rbusBenchBinary,
       "--hot-path-syscall-probe",
       operation,
     ],

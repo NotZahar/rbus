@@ -5,8 +5,9 @@ use loom::sync::atomic::AtomicU64;
 use loom::thread;
 use rbus_core::Sequence;
 use rbus_core::atomic::ordering::{
-    READER_MASK_UPDATE_ORDERING, READER_OBSERVE_ORDERING, SLOT_PROTOCOL_ORDERING,
-    WRITER_COMMIT_ORDERING,
+    READER_MASK_UPDATE_ORDERING, READER_OBSERVE_ORDERING, READER_PIN_FAILURE_ORDERING,
+    READER_PIN_ORDERING, READER_SLOT_OBSERVE_ORDERING, WRITER_CLAIM_FAILURE_ORDERING,
+    WRITER_CLAIM_ORDERING, WRITER_COMMIT_ORDERING, WRITER_STATE_UPDATE_ORDERING,
 };
 use rbus_core::constants::SLOT_WRITER_CLAIM_BIT;
 use rbus_core::ring::state::{encode_committed_state, encode_writing_state};
@@ -67,6 +68,18 @@ enum WriterClaimOutcome {
 struct ObservedMessage {
     length: u64,
     payload_word: u64,
+}
+
+#[test]
+fn slot_protocol_orderings_do_not_require_global_seq_cst() {
+    assert_ne!(WRITER_CLAIM_ORDERING, Ordering::SeqCst);
+    assert_ne!(WRITER_CLAIM_FAILURE_ORDERING, Ordering::SeqCst);
+    assert_ne!(WRITER_STATE_UPDATE_ORDERING, Ordering::SeqCst);
+    assert_ne!(WRITER_COMMIT_ORDERING, Ordering::SeqCst);
+    assert_ne!(READER_SLOT_OBSERVE_ORDERING, Ordering::SeqCst);
+    assert_ne!(READER_PIN_ORDERING, Ordering::SeqCst);
+    assert_ne!(READER_PIN_FAILURE_ORDERING, Ordering::SeqCst);
+    assert_ne!(READER_MASK_UPDATE_ORDERING, Ordering::SeqCst);
 }
 
 #[test]
@@ -142,12 +155,12 @@ fn try_pin_reader(
     expected_sequence: Sequence,
     reader_bit: u64,
 ) -> ReaderPinOutcome {
-    let state_sequence = slot.state_sequence.load(SLOT_PROTOCOL_ORDERING);
+    let state_sequence = slot.state_sequence.load(READER_SLOT_OBSERVE_ORDERING);
     if state_sequence != encode_committed_state(expected_sequence) {
         return ReaderPinOutcome::NotAvailable;
     }
 
-    let mut readers_mask = slot.readers_mask.load(SLOT_PROTOCOL_ORDERING);
+    let mut readers_mask = slot.readers_mask.load(READER_SLOT_OBSERVE_ORDERING);
     loop {
         if readers_mask & SLOT_WRITER_CLAIM_BIT != EMPTY_READER_MASK {
             return ReaderPinOutcome::NotAvailable;
@@ -155,19 +168,19 @@ fn try_pin_reader(
         match slot.readers_mask.compare_exchange(
             readers_mask,
             readers_mask | reader_bit,
-            SLOT_PROTOCOL_ORDERING,
-            SLOT_PROTOCOL_ORDERING,
+            READER_PIN_ORDERING,
+            READER_PIN_FAILURE_ORDERING,
         ) {
             Ok(_) => break,
             Err(observed_readers_mask) => readers_mask = observed_readers_mask,
         }
     }
-    let state_after_pin = slot.state_sequence.load(SLOT_PROTOCOL_ORDERING);
+    let state_after_pin = slot.state_sequence.load(READER_SLOT_OBSERVE_ORDERING);
     if state_after_pin == state_sequence {
         ReaderPinOutcome::Pinned
     } else {
         slot.readers_mask
-            .fetch_and(!reader_bit, SLOT_PROTOCOL_ORDERING);
+            .fetch_and(!reader_bit, READER_MASK_UPDATE_ORDERING);
         ReaderPinOutcome::RepinDetected
     }
 }
@@ -178,8 +191,8 @@ fn try_claim_writer(slot: &ModelSlot, sequence: Sequence) -> WriterClaimOutcome 
         .compare_exchange(
             EMPTY_READER_MASK,
             SLOT_WRITER_CLAIM_BIT,
-            SLOT_PROTOCOL_ORDERING,
-            SLOT_PROTOCOL_ORDERING,
+            WRITER_CLAIM_ORDERING,
+            WRITER_CLAIM_FAILURE_ORDERING,
         )
         .is_ok();
     if !claimed {
@@ -187,7 +200,7 @@ fn try_claim_writer(slot: &ModelSlot, sequence: Sequence) -> WriterClaimOutcome 
     }
 
     slot.state_sequence
-        .store(encode_writing_state(sequence), SLOT_PROTOCOL_ORDERING);
+        .store(encode_writing_state(sequence), WRITER_STATE_UPDATE_ORDERING);
     WriterClaimOutcome::Claimed
 }
 
@@ -196,12 +209,14 @@ fn commit_message(slot: &ModelSlot, sequence: Sequence) {
         .store(PUBLISHED_PAYLOAD_WORD, PAYLOAD_METADATA_ORDERING);
     slot.published_length
         .store(PUBLISHED_LENGTH, PAYLOAD_METADATA_ORDERING);
-    slot.state_sequence
-        .store(encode_committed_state(sequence), SLOT_PROTOCOL_ORDERING);
+    slot.state_sequence.store(
+        encode_committed_state(sequence),
+        WRITER_STATE_UPDATE_ORDERING,
+    );
     slot.write_sequence
         .store(sequence.next().as_u64(), WRITER_COMMIT_ORDERING);
     slot.readers_mask
-        .fetch_and(!SLOT_WRITER_CLAIM_BIT, SLOT_PROTOCOL_ORDERING);
+        .fetch_and(!SLOT_WRITER_CLAIM_BIT, READER_MASK_UPDATE_ORDERING);
 }
 
 fn observe_message(slot: &ModelSlot, expected_sequence: Sequence) -> Option<ObservedMessage> {

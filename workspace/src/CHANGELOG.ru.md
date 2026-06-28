@@ -4,7 +4,8 @@
 
 - Создан workspace проекта.
 - Зафиксирован Rust toolchain: `1.96.0`.
-- SHM ABI version: `2`.
+- Stream segment ABI version: `4`.
+- Topic wait segment ABI version: `1`.
 - Control protocol version: `2`.
 - Добавлена warning-only модель и начальная структура crates.
 - Включены workspace lints `warnings = deny` и `dead_code = deny`.
@@ -16,6 +17,7 @@
 - Добавлен regression test, где subscriber и publisher находятся в разных process-ах и обмениваются payload через daemon-registered memfd stream.
 - Расширены cross-process integration tests: parent process только оркестрирует, а `rbusd`, publishers и subscribers запускаются отдельными process-ами; покрыты несколько subscribers, несколько publishers одного topic-а, subscriber до publisher-а и attach existing stream при subscriber после publisher-а.
 - Topic wait segment получил отдельный `stream_epoch`, чтобы message wake не скрывал появление нового publisher stream-а у уже активного subscriber-а.
+- Topic wait segment получил явные `magic` и ABI version; attach с чужим layout теперь завершается `SegmentAbiMismatch`.
 - Shell-скрипт hot-path syscall regression заменён на TypeScript-скрипт без `awk`/`grep`/shell parsing.
 - `rbus-bench --smoke` теперь использует scenario/transport/payload matrix metadata в JSON-отчёте.
 - `rbus-cli bench-smoke` теперь запускает реальный `rbus-bench --smoke`, валидирует smoke JSON report и больше не печатает статическую заглушку `bench_smoke="ok"`.

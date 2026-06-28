@@ -4,9 +4,10 @@ import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
+import { workspacePaths } from "./workspace-paths.ts";
+
 const defaultMessages = "4";
 const defaultOutputPath = "benches/baselines/rbus_suite_baseline.csv";
-const sourceRoot = "/workspace/src";
 
 class ScriptError extends Error {
   readonly exitCode: number;
@@ -65,7 +66,7 @@ function requireValue(value: string | undefined, optionName: string): string {
 
 function runCommand(command: string, commandArguments: string[], captureStdout: boolean) {
   const result = spawnSync(command, commandArguments, {
-    cwd: sourceRoot,
+    cwd: workspacePaths.sourceRoot,
     encoding: "utf8",
     stdio: captureStdout ? ["ignore", "pipe", "pipe"] : "inherit",
   });
@@ -85,9 +86,9 @@ function runReference(options: ReferenceOptions) {
   if (options.matrixSmoke) {
     suiteArguments.splice(1, 0, "--matrix-smoke");
   }
-  const csv = runCommand(`${sourceRoot}/target/debug/rbus-bench`, suiteArguments, true);
+  const csv = runCommand(workspacePaths.rbusBenchBinary, suiteArguments, true);
   const rows = validateCsv(csv);
-  const outputPath = resolve(sourceRoot, options.outputPath);
+  const outputPath = resolve(workspacePaths.sourceRoot, options.outputPath);
   writeFileSync(outputPath, csv);
   console.log(JSON.stringify({ status: "ok", output: outputPath, rows, messages: Number(options.messages) }));
 }

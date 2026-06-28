@@ -31,7 +31,7 @@ pub fn print_command_help(command: HelpCommand) {
         ),
         HelpCommand::Doctor => print_command_usage(
             "rbus-cli doctor [--domain <domain>] [--json]",
-            "Checks socket, ABI, memfd, eventfd, futex and resource limits",
+            "Checks socket, versions, memfd, eventfd, futex and resource limits",
         ),
         HelpCommand::BenchSmoke => print_command_usage(
             "rbus-cli bench-smoke [--domain <domain>] [--json]",

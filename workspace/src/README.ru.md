@@ -53,8 +53,9 @@ CLI-команды `list`, `stats`, `warnings`, `inspect`, `cleanup` и `doctor`
 metadata и `SegmentHeader` без payload, `stats` и `warnings` агрегируют
 `StreamCounters` из shared memory, `cleanup` возвращает реально очищенные
 orphaned resources, а `doctor` проверяет `/run/user/<uid>`, socket path, права
-и owner socket directory, ABI/protocol, `memfd`, `mmap`, `eventfd`, `futex`,
-`SCM_RIGHTS`, `MAX_SEGMENT_SIZE` и resource limits.
+и owner socket directory, public API version, control protocol version, stream
+segment ABI version, topic wait segment ABI version, `memfd`, `mmap`, `eventfd`,
+`futex`, `SCM_RIGHTS`, `MAX_SEGMENT_SIZE` и resource limits.
 
 `rbus-cli bench-smoke` не обращается к daemon registry: команда запускает
 `rbus-bench --smoke`, проверяет machine-readable smoke report и печатает этот
@@ -101,6 +102,7 @@ if let Some(message) = subscriber.try_recv()? {
 
 - [Архитектура](../docs/ARCHITECTURE.ru.md)
 - [API](../docs/API.ru.md)
+- [Версии API/ABI](../docs/VERSIONS.ru.md)
 - [Предупреждения](../docs/WARNINGS.ru.md)
 - [Тестирование](../docs/TESTING.ru.md)
 - [Benchmark-и](../docs/BENCHMARKS.ru.md)

@@ -1,10 +1,25 @@
-//! Shared memory ABI metadata
+//! Version and ABI metadata
 
-/// Internal documentation
-pub const SHARED_MEMORY_MAGIC: u64 = 0x5242_5553_5348_4d31;
+/// Public API metadata
+pub const RBUS_API_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Shared memory ABI metadata
-pub const SHARED_MEMORY_ABI_VERSION: u32 = 3;
+/// Stream segment ABI metadata
+pub const STREAM_SEGMENT_MAGIC: u64 = 0x5242_5553_5348_4d31;
+
+/// Stream segment ABI metadata
+pub const STREAM_SEGMENT_ABI_VERSION: u32 = 4;
+
+/// Stream segment ABI metadata
+pub const SHARED_MEMORY_MAGIC: u64 = STREAM_SEGMENT_MAGIC;
+
+/// Stream segment ABI metadata
+pub const SHARED_MEMORY_ABI_VERSION: u32 = STREAM_SEGMENT_ABI_VERSION;
+
+/// Topic wait segment ABI metadata
+pub const TOPIC_WAIT_MAGIC: u64 = 0x5242_5553_5457_5431;
+
+/// Topic wait segment ABI metadata
+pub const TOPIC_WAIT_ABI_VERSION: u32 = 1;
 
 /// Daemon runtime metadata
 pub const SEGMENT_FLAG_CLOSED: u64 = 1;

@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, "..");
 const mountedWorkspaceRoot = resolve(repositoryRoot, "workspace");
-const mountedSourceRoot = "/workspace/src";
+const containerWorkspaceRoot = "/workspace";
+const mountedSourceRoot = `${containerWorkspaceRoot}/src`;
 const imageName = "localhost/rbus-dev:ubuntu-26";
 
 function runCommand(command, commandArguments, options = {}) {
@@ -97,7 +98,7 @@ function shellEscape(argument) {
 
 function runWorkspaceScript(scriptName, commandArguments = []) {
   const escapedArguments = commandArguments.map(shellEscape);
-  runInContainer(`node /workspace/scripts/${scriptName} ${escapedArguments.join(" ")}`);
+  runInContainer(`node ${containerWorkspaceRoot}/scripts/${scriptName} ${escapedArguments.join(" ")}`);
 }
 
 function runCheckSuite() {
@@ -120,7 +121,7 @@ function runBenchSuiteSmoke() {
 }
 
 function runHotPathSyscallSmoke() {
-  runInContainer("node /workspace/scripts/hot-path-syscall-smoke.ts");
+  runWorkspaceScript("hot-path-syscall-smoke.ts");
 }
 
 function runBenchmarkReference(commandArguments) {

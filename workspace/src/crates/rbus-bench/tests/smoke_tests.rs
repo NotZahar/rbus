@@ -12,6 +12,7 @@ const BASELINE_WARNING_COUNT_FIELD: usize = 25;
 const CSV_MINIMUM_FIELD_COUNT: usize = 24;
 const CSV_SYSCALLS_FIELD: usize = 23;
 const CSV_TRANSPORT_FIELD: usize = 2;
+const CONTAINER_SOURCE_ROOT_LITERAL: &str = concat!("/workspace", "/src");
 const MAXIMUM_PORTABLE_P50_NS: u64 = 100_000_000;
 const MAXIMUM_PORTABLE_P99_NS: u64 = 500_000_000;
 const MINIMUM_PORTABLE_THROUGHPUT: f64 = 1.0;
@@ -118,6 +119,25 @@ fn benchmark_reference_perf_strace_scripts_exist() {
         let contents = std::fs::read_to_string(script_path).expect("script should be readable");
         assert!(contents.contains("rbus-bench"));
         assert!(contents.contains("ScriptError"));
+    }
+}
+
+#[test]
+fn benchmark_scripts_do_not_hardcode_container_source_root() {
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("workspace root should exist");
+    for script_name in [
+        "benchmark-reference.ts",
+        "benchmark-perf.ts",
+        "benchmark-strace.ts",
+        "hot-path-syscall-smoke.ts",
+        "workspace-paths.ts",
+    ] {
+        let script_path = workspace_root.join("scripts").join(script_name);
+        let contents = std::fs::read_to_string(script_path).expect("script should be readable");
+        assert!(!contents.contains(CONTAINER_SOURCE_ROOT_LITERAL));
     }
 }
 

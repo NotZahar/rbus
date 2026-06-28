@@ -5,7 +5,10 @@ use std::os::unix::net::UnixStream;
 use std::path::Path;
 use std::sync::atomic::AtomicU32;
 
-use rbus_core::constants::{CONTROL_PROTOCOL_VERSION, MAX_SEGMENT_SIZE, SHARED_MEMORY_ABI_VERSION};
+use rbus_core::constants::{
+    CONTROL_PROTOCOL_VERSION, MAX_SEGMENT_SIZE, RBUS_API_VERSION, STREAM_SEGMENT_ABI_VERSION,
+    TOPIC_WAIT_ABI_VERSION,
+};
 use rbus_core::layout::calculate_segment_layout;
 use rbus_core::warning::{Warning, WarningCode};
 use rbus_ipc::eventfd::create_eventfd;
@@ -53,10 +56,14 @@ pub struct DoctorReport {
     pub socket_directory_owner_uid: u32,
     /// Socket directory permission bits
     pub socket_directory_mode: u32,
+    /// Public API version
+    pub api_version: &'static str,
     /// Control protocol version
     pub control_protocol_version: u16,
-    /// Shared-memory ABI version
-    pub shared_memory_abi_version: u32,
+    /// Stream segment ABI version
+    pub stream_segment_abi_version: u32,
+    /// Topic wait segment ABI version
+    pub topic_wait_abi_version: u32,
     /// memfd_create/ftruncate/seal works
     pub memfd_supported: bool,
     /// mmap MAP_SHARED works
@@ -140,8 +147,10 @@ pub fn doctor_domain(registry: &DaemonRegistry, domain: &str) -> Result<DoctorRe
         socket_directory_exists: socket_directory_status.exists,
         socket_directory_owner_uid: socket_directory_status.owner_uid,
         socket_directory_mode: socket_directory_status.mode,
+        api_version: RBUS_API_VERSION,
         control_protocol_version: CONTROL_PROTOCOL_VERSION,
-        shared_memory_abi_version: SHARED_MEMORY_ABI_VERSION,
+        stream_segment_abi_version: STREAM_SEGMENT_ABI_VERSION,
+        topic_wait_abi_version: TOPIC_WAIT_ABI_VERSION,
         memfd_supported: true,
         mmap_supported: true,
         eventfd_supported: true,
@@ -170,8 +179,9 @@ pub fn format_doctor_report(domain: &str, report: &DoctorReport, json: bool) -> 
                 "\"runtime_directory_mode\":{},\"socket_path\":\"{}\",",
                 "\"socket_exists\":{},\"socket_directory_exists\":{},",
                 "\"socket_directory_owner_uid\":{},\"socket_directory_mode\":{},",
-                "\"control_protocol\":{},\"shm_abi\":{},\"memfd\":{},\"mmap\":{},",
-                "\"eventfd\":{},\"futex\":{},\"scm_rights\":{},",
+                "\"api_version\":\"{}\",\"control_protocol_version\":{},",
+                "\"stream_segment_abi_version\":{},\"topic_wait_abi_version\":{},",
+                "\"memfd\":{},\"mmap\":{},\"eventfd\":{},\"futex\":{},\"scm_rights\":{},",
                 "\"max_segment_size\":{},\"nofile_soft\":{},\"nofile_hard\":{},",
                 "\"memlock_soft\":{},\"memlock_hard\":{},\"file_size_soft\":{},",
                 "\"file_size_hard\":{},\"address_space_soft\":{},\"address_space_hard\":{},",
@@ -187,8 +197,10 @@ pub fn format_doctor_report(domain: &str, report: &DoctorReport, json: bool) -> 
             report.socket_directory_exists,
             report.socket_directory_owner_uid,
             report.socket_directory_mode,
+            escape_json_string(report.api_version),
             report.control_protocol_version,
-            report.shared_memory_abi_version,
+            report.stream_segment_abi_version,
+            report.topic_wait_abi_version,
             report.memfd_supported,
             report.mmap_supported,
             report.eventfd_supported,
@@ -212,10 +224,11 @@ pub fn format_doctor_report(domain: &str, report: &DoctorReport, json: bool) -> 
                 "runtime_directory_owner_uid={} runtime_directory_mode={:o} ",
                 "socket_path={} socket_exists={} socket_directory_exists={} ",
                 "socket_directory_owner_uid={} socket_directory_mode={:o} ",
-                "control_protocol={} shm_abi={} memfd={} mmap={} eventfd={} futex={} ",
-                "scm_rights={} max_segment_size={} nofile_soft={} nofile_hard={} ",
-                "memlock_soft={} memlock_hard={} file_size_soft={} file_size_hard={} ",
-                "address_space_soft={} address_space_hard={} ",
+                "api_version={} control_protocol_version={} stream_segment_abi_version={} ",
+                "topic_wait_abi_version={} memfd={} mmap={} eventfd={} futex={} scm_rights={} ",
+                "max_segment_size={} nofile_soft={} nofile_hard={} memlock_soft={} ",
+                "memlock_hard={} file_size_soft={} file_size_hard={} address_space_soft={} ",
+                "address_space_hard={} ",
                 "warnings_total={}"
             ),
             domain,
@@ -228,8 +241,10 @@ pub fn format_doctor_report(domain: &str, report: &DoctorReport, json: bool) -> 
             report.socket_directory_exists,
             report.socket_directory_owner_uid,
             report.socket_directory_mode,
+            report.api_version,
             report.control_protocol_version,
-            report.shared_memory_abi_version,
+            report.stream_segment_abi_version,
+            report.topic_wait_abi_version,
             report.memfd_supported,
             report.mmap_supported,
             report.eventfd_supported,

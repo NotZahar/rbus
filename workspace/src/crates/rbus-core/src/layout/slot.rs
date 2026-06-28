@@ -1,4 +1,4 @@
-//! `SlotHeader` shared-memory ABI
+//! `SlotHeader` stream segment ABI
 use core::sync::atomic::AtomicU64;
 
 /// Slot metadata
