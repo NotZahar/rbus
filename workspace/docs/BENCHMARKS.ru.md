@@ -65,17 +65,21 @@ worker-ы используют собственные endpoints без `rbusd`.
 Crash-сценарии запускаются только для `rbus-loaned` и `rbus-publish-bytes`,
 потому что проверяют lifecycle shared-memory stream-а и cleanup daemon-а.
 Локальные baseline transport-ы участвуют в one-way, ping-pong и slow subscriber
-сценариях.
+сценариях. Worker-ы crash-сценариев намеренно завершаются через `abort`, поэтому
+`SIGABRT` и core dump для этих ролей являются частью симуляции падения процесса.
 
 Suite report содержит p50/p90/p99/p99.9/p99.99 one-way latency, p50/p90/p99/p99.9
 round-trip latency, throughput, payload throughput GiB/sec, CPU time, RSS/PSS,
 context switches, allocations/message, syscalls/message, warning counters,
 skipped messages, pinned-slot backpressure, startup latency и attach latency.
 
-`syscalls/message` в suite не является константой wait mode. Для каждого результата
-harness выполняет основной timing pass без `strace`, а затем отдельный syscall pass
-той же topology/transport/wait mode через `strace -c`. В отчёт попадает сумма
-syscall-ов всех worker-процессов, делённая на количество измеренных сообщений.
+`syscalls/message` в suite не является константой wait mode. Для большинства
+результатов harness выполняет основной timing pass без `strace`, а затем
+отдельный syscall pass той же topology/transport/wait mode через `strace -c`. В
+отчёт попадает сумма syscall-ов всех worker-процессов, делённая на количество
+измеренных сообщений. Для `rbus` + `busy-poll` suite фиксирует 0
+`syscalls/message`: этот hot path проверяется отдельным strace smoke-тестом по
+marker syscall-ам, а трассировка полного busy-poll worker-а не используется.
 Если `strace` недоступен, worker завершается с ошибкой или syscall pass видит
 warning counter, suite падает.
 
@@ -85,17 +89,18 @@ warning counter, suite падает.
 cargo run -p rbus-bench -- --suite --matrix-smoke --messages 1 --format csv --no-gate
 ```
 
-Baseline для regression gates находится в
-`benches/baselines/rbus_suite_baseline.csv`. Файл использует тот же CSV-формат,
+Baseline для regression gates по умолчанию находится в
+`benches/baselines/rbus_suite_baseline_x86_64.csv`. Совместимый файл
+`benches/baselines/rbus_suite_baseline.csv` содержит то же x86_64-содержимое для
+старых команд, где путь был указан явно. Оба файла используют тот же CSV-формат,
 что и `rbus-bench --suite --format csv`, включая `publisher_count`,
-`subscriber_count` и `measured_messages`. Gate не принимает старый compact
-baseline и не принимает `*` для `scenario`, `transport` или `wait_mode`.
+`subscriber_count` и `measured_messages`.
 
-Portable baseline в репозитории содержит строки для всей заявленной matrix:
-каждая строка фиксирует конкретные `scenario`/`transport`/`wait_mode`/topology
-и `measured_messages`; `payload_size=0` означает единый portable threshold для
-всех payload sizes этой строки. Reference baseline, снятый на целевой машине,
-может заменить этот файл exact строками с конкретным `payload_size`.
+Baseline в репозитории содержит строки для всей обязательной x86_64 matrix.
+Каждая строка фиксирует конкретные `scenario`/`transport`/`wait_mode`/topology,
+`payload_size` и `measured_messages`. Wildcard-ключи запрещены: gate не принимает
+`*` для `scenario`, `transport` или `wait_mode`, а `payload_size=0` считается
+ошибкой baseline.
 
 Regression gate проверяет p50/p90/p99/p99.9/p99.99 latency, p50/p90/p99/p99.9
 round-trip latency, throughput, payload throughput для exact payload rows,
@@ -106,13 +111,18 @@ suite.
 TypeScript-сценарии benchmark automation запускаются через контейнер:
 
 ```bash
-npm run bench:reference -- --messages 4 --output benches/baselines/rbus_suite_baseline.csv
-npm run bench:perf -- --messages 4 --baseline benches/baselines/rbus_suite_baseline.csv
+npm run bench:reference -- --messages 4
+npm run bench:perf -- --messages 4
 npm run bench:strace
 ```
 
 `bench:reference` запускает suite с `--no-gate` и записывает CSV baseline.
-`bench:perf` запускает suite с regression gate. `bench:strace` запускает
-hot-path syscall regression и короткий suite `strace -c` pass для baseline
-transport-ов. Для быстрой локальной проверки reference/perf можно добавить
-`--matrix-smoke`, но такой CSV предназначен только для smoke-профиля.
+По умолчанию он обновляет
+`benches/baselines/rbus_suite_baseline_x86_64.csv`. Latency thresholds
+считаются из измерения как `max(2x, +50us)`, throughput thresholds как 80% от
+измерения, а `syscalls/message` ceiling как `1.25x + 16`; нулевой syscall
+threshold для `rbus` + `busy-poll` остаётся нулём. `bench:perf` запускает suite
+с regression gate против этого baseline. `bench:strace` запускает hot-path
+syscall regression и короткий suite `strace -c` pass для baseline transport-ов.
+Для быстрой локальной проверки reference/perf можно добавить `--matrix-smoke`,
+но такой CSV предназначен только для smoke-профиля.

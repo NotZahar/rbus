@@ -4,10 +4,10 @@ use std::path::Path;
 use rbus_core::warning::{Warning, WarningCode};
 
 use crate::metrics::BenchmarkResult;
+use crate::payload::PAYLOAD_SIZES;
 use crate::report::CSV_HEADER;
 
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
-const ALL_PAYLOAD_SIZES: usize = 0;
 const BACKPRESSURE_PINNED_SLOT_FIELD: usize = 27;
 const BASELINE_FIELD_COUNT: usize = 30;
 const LATENCY_P50_FIELD: usize = 8;
@@ -38,6 +38,9 @@ const WAIT_MODE_FIELD: usize = 3;
 const WARNING_COUNT_FIELD: usize = 25;
 const ALLOCATIONS_FIELD: usize = 24;
 const WILDCARD_KEY: &str = "*";
+
+/// Benchmark baseline path.
+pub const DEFAULT_BASELINE_PATH: &str = "benches/baselines/rbus_suite_baseline_x86_64.csv";
 
 /// Benchmark metadata
 pub fn enforce_regression_gates(
@@ -151,7 +154,7 @@ fn parse_baseline_entry(line: &str) -> Result<BaselineEntry, Warning> {
         scenario: parse_key_field(fields[SCENARIO_FIELD], "scenario")?,
         transport: parse_key_field(fields[TRANSPORT_FIELD], "transport")?,
         wait_mode: parse_key_field(fields[WAIT_MODE_FIELD], "wait_mode")?,
-        payload_size: parse_field(fields[PAYLOAD_SIZE_FIELD], "payload_size")?,
+        payload_size: parse_payload_size_field(fields[PAYLOAD_SIZE_FIELD])?,
         publisher_count: parse_field(fields[PUBLISHER_COUNT_FIELD], "publisher_count")?,
         subscriber_count: parse_field(fields[SUBSCRIBER_COUNT_FIELD], "subscriber_count")?,
         measured_messages: parse_field(fields[MEASURED_MESSAGES_FIELD], "measured_messages")?,
@@ -191,6 +194,14 @@ fn parse_key_field(value: &str, _field_name: &'static str) -> Result<String, War
         return Err(gate_warning("parse_baseline_entry::key"));
     }
     Ok(value.to_owned())
+}
+
+fn parse_payload_size_field(value: &str) -> Result<usize, Warning> {
+    let payload_size = parse_field::<usize>(value, "payload_size")?;
+    if PAYLOAD_SIZES.contains(&payload_size) {
+        return Ok(payload_size);
+    }
+    Err(gate_warning("parse_baseline_entry::payload_size"))
 }
 
 fn parse_field<T>(value: &str, _field_name: &'static str) -> Result<T, Warning>
@@ -297,7 +308,7 @@ impl BaselineEntry {
         self.scenario == result.scenario
             && self.transport == result.transport.as_str()
             && self.wait_mode == result.wait_mode.as_str()
-            && (self.payload_size == ALL_PAYLOAD_SIZES || self.payload_size == result.payload_size)
+            && self.payload_size == result.payload_size
             && self.publisher_count == result.publisher_count
             && self.subscriber_count == result.subscriber_count
             && self.measured_messages == result.measured_messages
@@ -325,6 +336,7 @@ mod tests {
 
     const BASELINE_NAME_PREFIX: &str = "rbus-baseline-test";
     const TEST_SCENARIO: &str = "one-publisher-one-subscriber";
+    const ZERO_PAYLOAD_SIZE: usize = 0;
     const TEST_PAYLOAD_SIZE: usize = 64;
     const TEST_THROUGHPUT: f64 = 1_000.0;
 
@@ -340,13 +352,13 @@ mod tests {
     }
 
     #[test]
-    fn all_payload_baseline_entry_allows_matching_result() {
+    fn baseline_gate_rejects_zero_payload_key() {
         let path = write_baseline(
-            "all-payload",
-            &baseline_line(TEST_SCENARIO, "rbus-loaned", ALL_PAYLOAD_SIZES, 100, 0),
+            "zero-payload",
+            &baseline_line(TEST_SCENARIO, "rbus-loaned", ZERO_PAYLOAD_SIZE, 100, 0),
         );
         let result = benchmark_result(100);
-        enforce_regression_gates(&path, &[result]).expect("baseline should pass");
+        assert!(enforce_regression_gates(&path, &[result]).is_err());
         remove_baseline(path);
     }
 

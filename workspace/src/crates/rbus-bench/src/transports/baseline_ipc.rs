@@ -1,6 +1,6 @@
 use std::fs::{File, OpenOptions};
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{Ipv4Addr, SocketAddrV4, TcpListener, TcpStream};
 use std::os::unix::fs::OpenOptionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
@@ -12,9 +12,10 @@ use crate::allocation;
 use crate::system_metrics::{ProcessSystemSnapshot, monotonic_time_ns};
 use crate::transport_kind::TransportKind;
 use crate::transports::baseline_paths::{
-    make_fifo, pair_path, queue_name, remove_path, stream_path, tcp_address,
+    make_fifo, pair_path, queue_name, remove_path, stream_path,
 };
 use crate::transports::posix_queue::PosixMessageQueue;
+use crate::transports::tcp_loopback::bind_reusable_listener;
 use crate::worker::{
     LATENCY_PREFIX, WorkerArguments, WorkerReport, WorkerRole, warmup_messages_per_publisher,
 };
@@ -25,6 +26,7 @@ const FILL_BYTE: u8 = 0xA5;
 const CONNECT_RETRY_ATTEMPTS: usize = 2_000;
 const CONNECT_RETRY_INTERVAL_MS: u64 = 1;
 const RECV_TIMEOUT_MS: u64 = 5_000;
+const TCP_PORT_FILE_EXTENSION: &str = "tcp-port";
 const TIMESTAMP_BYTES: usize = core::mem::size_of::<u64>();
 
 /// Benchmark metadata
@@ -164,6 +166,7 @@ enum BaselineReceiver {
         listener: Option<TcpListener>,
         streams: Vec<TcpStream>,
         next_stream_index: usize,
+        port_path: PathBuf,
     },
     PosixMessageQueue {
         queues: Vec<PosixMessageQueue>,
@@ -247,7 +250,10 @@ impl Drop for BaselineReceiver {
                     let _ = std::fs::remove_file(path);
                 }
             }
-            Self::TcpLoopback { .. } | Self::PosixMessageQueue { .. } => {}
+            Self::TcpLoopback { port_path, .. } => {
+                let _ = std::fs::remove_file(port_path);
+            }
+            Self::PosixMessageQueue { .. } => {}
         }
     }
 }
@@ -377,12 +383,28 @@ fn bind_tcp_loopback(
     arguments: &WorkerArguments,
     topic: &str,
 ) -> Result<BaselineReceiver, Warning> {
-    let listener = TcpListener::bind(tcp_address(arguments, topic, arguments.worker_index))
-        .map_err(warning_from_io)?;
+    let listener = bind_reusable_listener(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))?;
+    let port_path = stream_path(
+        arguments,
+        topic,
+        TCP_PORT_FILE_EXTENSION,
+        arguments.worker_index,
+    );
+    remove_path(&port_path)?;
+    std::fs::write(
+        &port_path,
+        listener
+            .local_addr()
+            .map_err(warning_from_io)?
+            .port()
+            .to_string(),
+    )
+    .map_err(warning_from_io)?;
     Ok(BaselineReceiver::TcpLoopback {
         listener: Some(listener),
         streams: Vec::new(),
         next_stream_index: 0,
+        port_path,
     })
 }
 
@@ -392,12 +414,22 @@ fn connect_tcp_loopback(
 ) -> Result<BaselineSender, Warning> {
     let mut streams = Vec::new();
     for subscriber_index in 0..arguments.subscriber_count {
-        let address = tcp_address(arguments, topic, subscriber_index);
+        let port_path = stream_path(arguments, topic, TCP_PORT_FILE_EXTENSION, subscriber_index);
         streams.push(retry_connect(|| {
+            let port = read_tcp_port(&port_path)?;
+            let address = SocketAddrV4::new(Ipv4Addr::LOCALHOST, port);
             TcpStream::connect(address).map_err(warning_from_io)
         })?);
     }
     Ok(BaselineSender::TcpLoopback(streams))
+}
+
+fn read_tcp_port(path: &PathBuf) -> Result<u16, Warning> {
+    std::fs::read_to_string(path)
+        .map_err(warning_from_io)?
+        .trim()
+        .parse::<u16>()
+        .map_err(|_| invalid_argument())
 }
 
 fn bind_posix_message_queue(

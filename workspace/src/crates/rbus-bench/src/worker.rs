@@ -11,7 +11,9 @@ use crate::wait_mode::WaitMode;
 
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
 const BLOCKING_PUBLISH_DELAY_MICROS: u64 = 100;
+const BUSY_POLL_PUBLISHER_START_DELAY_MS: u64 = 1_000;
 const FILL_BYTE: u8 = 0xA5;
+const BUSY_POLL_PUBLISHER_STREAM_LINGER_MS: u64 = 500;
 const READY_FILE_BYTES: &[u8] = b"ready\n";
 const RECV_TIMEOUT_MS: u64 = 5_000;
 const TIMESTAMP_BYTES: usize = core::mem::size_of::<u64>();
@@ -22,76 +24,45 @@ pub const RESULT_PREFIX: &str = "RBUS_BENCH_WORKER_RESULT ";
 
 const _: () = assert!(TIMESTAMP_BYTES <= 64);
 
-/// Benchmark metadata
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WorkerRole {
-    /// Publisher one-way scenario
     Publisher,
-    /// Subscriber one-way scenario
     Subscriber,
-    /// Ping-pong responder
     PingResponder,
-    /// Ping-pong requester
     PingRequester,
-    /// Subscriber runtime metadata
     CrashSubscriber,
-    /// Publisher runtime metadata
     CrashPublisher,
 }
 
-/// Benchmark metadata
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WorkerArguments {
-    /// Worker role
     pub role: WorkerRole,
-    /// Domain rbus
     pub domain: String,
-    /// Topic request/one-way
     pub topic: String,
-    /// Topic runtime metadata
     pub response_topic: String,
-    /// Payload metadata
     pub payload_size: usize,
-    /// Depth ring buffer
     pub depth: usize,
     pub worker_index: u8,
-    /// Publisher runtime metadata
     pub publisher_count: u8,
     pub subscriber_count: u8,
-    /// Publisher runtime metadata
     pub messages_per_publisher: u32,
-    /// Wait mode
     pub wait_mode: WaitMode,
-    /// Transport
     pub transport: TransportKind,
-    /// Ready marker file
     pub ready_file: Option<PathBuf>,
-    /// Subscriber runtime metadata
     pub slow_subscriber: bool,
 }
 
-/// Benchmark metadata
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WorkerReport {
-    /// Benchmark metadata
     pub messages: u64,
-    /// Internal documentation
     pub duration_ns: u64,
-    /// Allocation/reallocation count
     pub allocations: u64,
-    /// CPU time ns
     pub cpu_time_ns: u64,
-    /// Context switches
     pub context_switches: u64,
-    /// RSS bytes
     pub rss_bytes: u64,
-    /// PSS bytes
     pub pss_bytes: u64,
-    /// Warning model metadata
     pub warnings: u64,
-    /// Internal documentation
     pub skipped_messages: u64,
-    /// Internal documentation
     pub backpressure_pinned_slot: u64,
 }
 
@@ -197,6 +168,9 @@ pub(crate) const fn warmup_messages_per_publisher() -> u32 {
 fn run_publisher(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> {
     let bus = Bus::connect(&arguments.domain)?;
     let publisher = bus.publisher(&arguments.topic, topic_config(arguments))?;
+    if arguments.transport.is_rbus() && arguments.wait_mode == WaitMode::BusyPoll {
+        std::thread::sleep(Duration::from_millis(BUSY_POLL_PUBLISHER_START_DELAY_MS));
+    }
     let mut publish_bytes_buffer = vec![FILL_BYTE; arguments.payload_size];
 
     for _message_index in 0..WARMUP_MESSAGES_PER_PUBLISHER {
@@ -216,6 +190,9 @@ fn run_publisher(arguments: &WorkerArguments) -> Result<WorkerReport, Warning> {
     let allocations = allocation::allocation_delta(allocation_start);
     let system_delta = ProcessSystemSnapshot::capture()?.delta(system_start);
     let stats = publisher.stats();
+    if arguments.transport.is_rbus() && arguments.wait_mode == WaitMode::BusyPoll {
+        std::thread::sleep(Duration::from_millis(BUSY_POLL_PUBLISHER_STREAM_LINGER_MS));
+    }
     Ok(WorkerReport {
         messages: u64::from(arguments.messages_per_publisher),
         duration_ns,

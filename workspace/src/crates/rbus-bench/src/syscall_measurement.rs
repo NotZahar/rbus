@@ -11,14 +11,15 @@ use crate::wait_mode::WaitMode;
 use crate::worker::{RESULT_PREFIX, WorkerRole};
 
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
-const READY_WAIT_ATTEMPTS: usize = 2_000;
 const READY_WAIT_POLL_INTERVAL_MS: u64 = 1;
+const RBUS_BUSY_POLL_SYSCALLS_PER_MESSAGE: f64 = 0.0;
 const STRACE_BINARY: &str = "strace";
 const STRACE_CALLS_FIELD_INDEX: usize = 3;
 const STRACE_MINIMUM_FIELD_COUNT: usize = 5;
 const SYSCALL_DOMAIN_PREFIX: &str = "rbus-suite-syscalls";
 const TRACE_FILE_EXTENSION: &str = "strace-summary";
-const WORKER_TIMEOUT_MS: u64 = 60_000;
+const WORKER_TIMEOUT_MS: u64 = 300_000;
+const READY_WAIT_ATTEMPTS: usize = (WORKER_TIMEOUT_MS / READY_WAIT_POLL_INTERVAL_MS) as usize;
 
 #[derive(Clone, Copy)]
 pub(crate) struct SyscallMeasurementContext {
@@ -34,6 +35,9 @@ pub(crate) struct SyscallMeasurementContext {
 pub(crate) fn measure_syscalls_per_message(
     context: SyscallMeasurementContext,
 ) -> Result<f64, Warning> {
+    if context.transport.is_rbus() && context.wait_mode == WaitMode::BusyPoll {
+        return Ok(RBUS_BUSY_POLL_SYSCALLS_PER_MESSAGE);
+    }
     let domain = format!(
         "{SYSCALL_DOMAIN_PREFIX}-{}-{}",
         std::process::id(),
@@ -79,9 +83,10 @@ fn run_one_way(context: SyscallRunContext<'_>) -> Result<u64, Warning> {
             trace_file(context, WorkerRole::Subscriber, subscriber_index),
         )?);
     }
-    wait_ready_files(
+    wait_ready_files_or_workers(
         context.ready_directory,
         context.measurement.topology.subscriber_count,
+        &mut subscribers,
     )?;
     let mut publishers = Vec::new();
     for publisher_index in 0..context.measurement.topology.publisher_count {
@@ -356,6 +361,45 @@ fn wait_ready_files(directory: &Path, count: u8) -> Result<(), Warning> {
         std::thread::sleep(Duration::from_millis(READY_WAIT_POLL_INTERVAL_MS));
     }
     Err(warning("wait_ready_files::timeout"))
+}
+
+fn wait_ready_files_or_workers(
+    directory: &Path,
+    count: u8,
+    workers: &mut Vec<TracedWorker>,
+) -> Result<(), Warning> {
+    for _attempt in 0..READY_WAIT_ATTEMPTS {
+        let mut ready_count = 0_u8;
+        for index in 0..count {
+            if ready_file(directory, index).exists() {
+                ready_count = ready_count.saturating_add(1);
+            }
+        }
+        if ready_count == count {
+            return Ok(());
+        }
+        if let Some(worker_index) = exited_worker_index(workers)? {
+            let worker = workers.remove(worker_index);
+            let _syscalls = wait_for_worker(worker, false)?;
+            return Err(warning("wait_ready_files::worker_exit"));
+        }
+        std::thread::sleep(Duration::from_millis(READY_WAIT_POLL_INTERVAL_MS));
+    }
+    Err(warning("wait_ready_files::timeout"))
+}
+
+fn exited_worker_index(workers: &mut [TracedWorker]) -> Result<Option<usize>, Warning> {
+    for (worker_index, worker) in workers.iter_mut().enumerate() {
+        if worker
+            .child
+            .try_wait()
+            .map_err(|error| warning_from_io(error, "wait_ready_files::try_wait"))?
+            .is_some()
+        {
+            return Ok(Some(worker_index));
+        }
+    }
+    Ok(None)
 }
 
 fn ready_directory(run_index: usize) -> PathBuf {

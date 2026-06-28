@@ -13,6 +13,8 @@ mod process;
 mod report;
 mod scenarios;
 mod suite;
+mod suite_matrix;
+mod suite_ready;
 mod syscall_measurement;
 mod system_metrics;
 mod topology;
@@ -33,8 +35,10 @@ fn main() -> ExitCode {
         Ok(arguments) => harness::run(arguments),
         Err(warning) => {
             eprintln!(
-                "warning [{}]: {}\nstacktrace:\n{}",
+                "warning [{}] {}::{}: {}\nstacktrace:\n{}",
                 warning.code().as_str(),
+                warning.component(),
+                warning.operation(),
                 warning.message(),
                 std::backtrace::Backtrace::force_capture()
             );

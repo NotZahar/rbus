@@ -5,7 +5,7 @@ import { resolve } from "node:path";
 
 import { workspacePaths } from "./workspace-paths.ts";
 
-const defaultBaselinePath = "benches/baselines/rbus_suite_baseline.csv";
+const defaultBaselinePath = "benches/baselines/rbus_suite_baseline_x86_64.csv";
 const defaultFormat = "json";
 const defaultMessages = "4";
 

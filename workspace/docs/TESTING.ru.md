@@ -31,10 +31,13 @@ npm run bench:perf -- --messages 4
 npm run bench:strace
 ```
 
-`bench:reference` обновляет CSV baseline из no-gate прогона, `bench:perf`
-применяет regression gates к текущему baseline, а `bench:strace` совмещает
-hot-path syscall smoke и короткий suite pass, где `syscalls/message` снимается
-через `strace -c`.
+`bench:reference` обновляет CSV baseline из no-gate прогона и по умолчанию
+пишет `benches/baselines/rbus_suite_baseline_x86_64.csv`,
+`bench:perf` применяет regression gates к этому baseline, а `bench:strace`
+совмещает hot-path syscall smoke и короткий suite pass, где
+`syscalls/message` снимается через `strace -c`. Reference CSV хранит thresholds:
+latency `max(2x, +50us)`, throughput 80% от измерения и syscall ceiling
+`1.25x + 16`.
 
 Benchmark TypeScript-скрипты не содержат абсолютный container source path:
 корень `workspace/src` вычисляется от расположения файла
@@ -131,7 +134,7 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | 0 allocations в zero-copy hot path | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `zero_copy_hot_path_does_not_allocate` |
 | 0 syscalls в non-blocking hot path | `crates/rbus-bench/src/hot_path_syscall.rs` | `workspace/scripts/hot-path-syscall-smoke.ts` |
 | Multi-process benchmark suite smoke | `crates/rbus-bench/src/{suite.rs,worker.rs}` | `bench_suite_matrix_smoke_outputs_csv` |
-| Benchmark regression gates | `crates/rbus-bench/src/baseline.rs` | `full_baseline_entry_allows_matching_result`, `baseline_gate_rejects_latency_regression` |
+| Benchmark regression gates | `crates/rbus-bench/src/baseline.rs` | `full_baseline_entry_allows_matching_result`, `baseline_gate_rejects_latency_regression`, `baseline_gate_rejects_zero_payload_key` |
 | Benchmark reference/perf/strace scripts | `workspace/scripts/benchmark-{reference,perf,strace}.ts`, `workspace/scripts/workspace-paths.ts` | `benchmark_reference_perf_strace_scripts_exist`, `benchmark_scripts_do_not_hardcode_container_source_root` |
 | Benchmark recv_timeout warning path | `crates/rbus-bench/src/worker.rs` | `bench_worker_recv_timeout_warning_path_is_fatal` |
 | Local IPC benchmark baselines | `crates/rbus-bench/src/transports/{baseline_ipc.rs,baseline_paths.rs,posix_queue.rs}` | `bench_suite_matrix_smoke_outputs_csv` |

@@ -2,11 +2,11 @@ use std::path::PathBuf;
 
 use rbus_core::warning::{Warning, WarningCode};
 
+use crate::baseline::DEFAULT_BASELINE_PATH;
 use crate::hot_path_syscall::HotPathOperation;
 use crate::output_format::OutputFormat;
 use crate::worker::{WorkerArguments, WorkerRole};
 
-const DEFAULT_BASELINE_PATH: &str = "benches/baselines/rbus_suite_baseline.csv";
 const DEFAULT_MESSAGES_PER_PUBLISHER: u32 = 4;
 
 /// Benchmark metadata

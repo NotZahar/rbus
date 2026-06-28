@@ -35,6 +35,9 @@ npm run bench:strace
 npm run hot-path:syscalls
 ```
 
+`bench:reference` и `bench:perf` по умолчанию используют x86_64 baseline
+`benches/baselines/rbus_suite_baseline_x86_64.csv`.
+
 ## Daemon и CLI
 
 `rbusd --domain default` запускает foreground control-plane daemon и слушает

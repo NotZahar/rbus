@@ -34,3 +34,4 @@
 - Добавлен re-register после restart `rbusd`: publisher повторно отдаёт старые stream/topic-wait FD новому daemon-у, subscriber получает новый `subscriber_id` вне hot path, а новый subscriber после restart-а может attach-иться к старому publisher stream.
 - Добавлен custom allocator regression test, доказывающий 0 heap allocations для zero-copy `loan` + `publish`, `try_recv` с сообщением и `try_recv` без сообщения.
 - Benchmark regression gates переведены на полный CSV-формат suite report; добавлены TypeScript-сценарии `bench:reference`, `bench:perf` и `bench:strace`.
+- Benchmark baseline заменён на exact x86_64 matrix 64 B..8 MiB без `payload_size=0`; default regression gate читает `rbus_suite_baseline_x86_64.csv`, а legacy CSV оставлен как совместимое зеркало.

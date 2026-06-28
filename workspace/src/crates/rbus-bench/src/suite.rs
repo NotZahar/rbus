@@ -9,26 +9,26 @@ use crate::baseline::enforce_regression_gates;
 use crate::daemon_process::DaemonProcess;
 use crate::metrics::{BenchmarkResult, BenchmarkResultContext};
 use crate::output_format::OutputFormat;
-use crate::payload::PAYLOAD_SIZES;
 use crate::report::SuiteReport;
+use crate::suite_matrix::{
+    depth_for, measured_messages, selected_payload_sizes, selected_topologies, selected_wait_modes,
+};
+use crate::suite_ready::{
+    create_ready_directory, ready_directory, ready_file, remove_ready_directory, wait_ready_files,
+    wait_ready_files_or_worker_exit,
+};
 use crate::syscall_measurement::{SyscallMeasurementContext, measure_syscalls_per_message};
 use crate::system_metrics::monotonic_time_ns;
-use crate::topology::{ScenarioKind, TOPOLOGIES, Topology};
+use crate::topology::{ScenarioKind, Topology};
 use crate::transport_kind::{SUITE_TRANSPORTS, TransportKind};
-use crate::wait_mode::{WAIT_MODES, WaitMode};
-use crate::worker::{
-    LATENCY_PREFIX, RESULT_PREFIX, WorkerReport, WorkerRole, warmup_messages_per_publisher,
-};
+use crate::wait_mode::WaitMode;
+use crate::worker::{LATENCY_PREFIX, RESULT_PREFIX, WorkerReport, WorkerRole};
 
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
-const DEPTH_MINIMUM: usize = 8;
-const READY_WAIT_ATTEMPTS: usize = 2_000;
-const READY_WAIT_POLL_INTERVAL_MS: u64 = 1;
 const SUITE_DOMAIN_PREFIX: &str = "rbus-suite";
+const WORKER_WAIT_POLL_INTERVAL_MS: u64 = 1;
 const WORKER_REPORT_FIELD_COUNT: usize = 11;
-const WORKER_TIMEOUT_MS: u64 = 60_000;
-
-const _: () = assert!(DEPTH_MINIMUM.is_power_of_two());
+const WORKER_TIMEOUT_MS: u64 = 300_000;
 
 pub fn run_suite(options: &SuiteOptions) -> Result<SuiteReport, Warning> {
     let topologies = selected_topologies(options);
@@ -128,6 +128,9 @@ fn run_topology(
 }
 
 fn run_one_way(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning> {
+    if context.transport.is_rbus() && context.wait_mode == WaitMode::BusyPoll {
+        return run_one_way_publishers_first(context);
+    }
     let mut subscribers = Vec::new();
     let attach_started_at = monotonic_time_ns()?;
     for subscriber_index in 0..context.topology.subscriber_count {
@@ -139,7 +142,11 @@ fn run_one_way(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning>
             Some(&ready_file),
         ))?);
     }
-    wait_ready_files(context.ready_directory, context.topology.subscriber_count)?;
+    wait_ready_files_or_workers(
+        context.ready_directory,
+        context.topology.subscriber_count,
+        &mut subscribers,
+    )?;
     let attach_latency_ns = monotonic_time_ns()?.saturating_sub(attach_started_at);
     let wall_started_at = monotonic_time_ns()?;
     let mut publishers = Vec::new();
@@ -151,6 +158,51 @@ fn run_one_way(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning>
             None,
         ))?);
     }
+    let mut parsed_outputs = Vec::new();
+    for publisher in publishers {
+        parsed_outputs.push(parse_worker_output(wait_for_worker(publisher, false)?)?);
+    }
+    for subscriber in subscribers {
+        parsed_outputs.push(parse_worker_output(wait_for_worker(subscriber, false)?)?);
+    }
+    let wall_time_ns = monotonic_time_ns()?.saturating_sub(wall_started_at);
+    aggregate_result(
+        context,
+        parsed_outputs,
+        Vec::new(),
+        wall_time_ns,
+        attach_latency_ns,
+    )
+}
+
+fn run_one_way_publishers_first(context: ScenarioContext<'_>) -> Result<BenchmarkResult, Warning> {
+    let wall_started_at = monotonic_time_ns()?;
+    let mut publishers = Vec::new();
+    for publisher_index in 0..context.topology.publisher_count {
+        publishers.push(spawn_worker(worker_arguments(
+            context,
+            WorkerRole::Publisher,
+            publisher_index,
+            None,
+        ))?);
+    }
+    let attach_started_at = monotonic_time_ns()?;
+    let mut subscribers = Vec::new();
+    for subscriber_index in 0..context.topology.subscriber_count {
+        let ready_file = ready_file(context.ready_directory, subscriber_index);
+        subscribers.push(spawn_worker(worker_arguments(
+            context,
+            WorkerRole::Subscriber,
+            subscriber_index,
+            Some(&ready_file),
+        ))?);
+    }
+    wait_ready_files_or_workers(
+        context.ready_directory,
+        context.topology.subscriber_count,
+        &mut subscribers,
+    )?;
+    let attach_latency_ns = monotonic_time_ns()?.saturating_sub(attach_started_at);
     let mut parsed_outputs = Vec::new();
     for publisher in publishers {
         parsed_outputs.push(parse_worker_output(wait_for_worker(publisher, false)?)?);
@@ -282,7 +334,12 @@ fn aggregate_result(
             payload_size: context.payload_size,
             publisher_count: context.topology.publisher_count,
             subscriber_count: context.topology.subscriber_count,
-            measured_messages: measured_messages(context),
+            measured_messages: measured_messages(
+                context.topology.kind,
+                context.topology.publisher_count,
+                context.topology.subscriber_count,
+                context.options.messages_per_publisher,
+            ),
             wall_time_ns,
             allocation_count: aggregate.allocations,
             cpu_time_ns: aggregate.cpu_time_ns,
@@ -370,7 +427,7 @@ fn wait_for_worker(mut child: Child, allow_failure: bool) -> Result<Output, Warn
                 .map_err(|error| warning_from_io(error, "wait_for_worker::kill"))?;
             return Err(warning("wait_for_worker::timeout"));
         }
-        std::thread::sleep(Duration::from_millis(READY_WAIT_POLL_INTERVAL_MS));
+        std::thread::sleep(Duration::from_millis(WORKER_WAIT_POLL_INTERVAL_MS));
     }
     let output = child
         .wait_with_output()
@@ -444,20 +501,16 @@ fn parse_report_value(value: &str) -> Result<u64, Warning> {
         .map_err(|_| warning("parse_worker_report::value"))
 }
 
-fn wait_ready_files(directory: &Path, count: u8) -> Result<(), Warning> {
-    for _attempt in 0..READY_WAIT_ATTEMPTS {
-        let mut ready_count = 0_u8;
-        for index in 0..count {
-            if ready_file(directory, index).exists() {
-                ready_count = ready_count.saturating_add(1);
-            }
-        }
-        if ready_count == count {
-            return Ok(());
-        }
-        std::thread::sleep(Duration::from_millis(READY_WAIT_POLL_INTERVAL_MS));
+fn wait_ready_files_or_workers(
+    directory: &Path,
+    count: u8,
+    workers: &mut Vec<Child>,
+) -> Result<(), Warning> {
+    if let Some(worker) = wait_ready_files_or_worker_exit(directory, count, workers)? {
+        let _output = wait_for_worker(worker, false)?;
+        return Err(warning("wait_ready_files::worker_exit"));
     }
-    Err(warning("wait_ready_files::timeout"))
+    Ok(())
 }
 
 fn aggregate_worker_reports(reports: &[WorkerReport]) -> WorkerReport {
@@ -481,67 +534,6 @@ fn aggregate_worker_reports(reports: &[WorkerReport]) -> WorkerReport {
             .saturating_add(report.backpressure_pinned_slot);
     }
     aggregate
-}
-
-fn measured_messages(context: ScenarioContext<'_>) -> u64 {
-    match context.topology.kind {
-        ScenarioKind::PingPong => u64::from(context.options.messages_per_publisher),
-        ScenarioKind::CrashSubscriber | ScenarioKind::CrashPublisher => {
-            u64::from(context.options.messages_per_publisher)
-        }
-        ScenarioKind::OneWay | ScenarioKind::SlowSubscriber => {
-            u64::from(context.topology.publisher_count)
-                * u64::from(context.topology.subscriber_count)
-                * u64::from(context.options.messages_per_publisher)
-        }
-    }
-}
-
-fn depth_for(messages_per_publisher: u32) -> usize {
-    let total_messages = messages_per_publisher
-        .saturating_add(warmup_messages_per_publisher())
-        .saturating_add(1);
-    DEPTH_MINIMUM.max(total_messages.next_power_of_two() as usize)
-}
-
-fn selected_topologies(options: &SuiteOptions) -> &'static [Topology] {
-    if options.matrix_smoke {
-        &TOPOLOGIES[..1]
-    } else {
-        TOPOLOGIES
-    }
-}
-
-fn selected_payload_sizes(options: &SuiteOptions) -> &'static [usize] {
-    if options.matrix_smoke {
-        &PAYLOAD_SIZES[..1]
-    } else {
-        PAYLOAD_SIZES
-    }
-}
-
-fn selected_wait_modes(options: &SuiteOptions) -> &'static [WaitMode] {
-    if options.matrix_smoke {
-        &WAIT_MODES[..1]
-    } else {
-        WAIT_MODES
-    }
-}
-
-fn ready_directory(run_index: usize) -> PathBuf {
-    std::env::temp_dir().join(format!("rbus-bench-{}-{run_index}", std::process::id()))
-}
-
-fn ready_file(directory: &Path, index: u8) -> PathBuf {
-    directory.join(format!("subscriber-{index}.ready"))
-}
-
-fn create_ready_directory(directory: &Path) -> Result<(), Warning> {
-    std::fs::create_dir_all(directory).map_err(|error| warning_from_io(error, "ready_dir::create"))
-}
-
-fn remove_ready_directory(directory: &Path) -> Result<(), Warning> {
-    std::fs::remove_dir_all(directory).map_err(|error| warning_from_io(error, "ready_dir::remove"))
 }
 
 fn current_executable() -> Result<PathBuf, Warning> {

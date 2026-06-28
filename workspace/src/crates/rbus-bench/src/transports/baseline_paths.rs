@@ -1,5 +1,4 @@
 use std::ffi::CString;
-use std::net::{Ipv4Addr, SocketAddrV4};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 
@@ -10,8 +9,6 @@ use crate::worker::WorkerArguments;
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
 const HASH_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const HASH_PRIME: u64 = 0x0000_0100_0000_01B3;
-const LOOPBACK_PORT_BASE: u16 = 20_000;
-const LOOPBACK_PORT_RANGE: u64 = 20_000;
 
 pub(crate) fn stream_path(
     arguments: &WorkerArguments,
@@ -51,19 +48,6 @@ pub(crate) fn queue_name(
         subscriber_index
     ))
     .map_err(|_| invalid_argument())
-}
-
-pub(crate) fn tcp_address(
-    arguments: &WorkerArguments,
-    topic: &str,
-    subscriber_index: u8,
-) -> SocketAddrV4 {
-    let port_offset = stable_hash(arguments, topic).saturating_add(u64::from(subscriber_index))
-        % LOOPBACK_PORT_RANGE;
-    SocketAddrV4::new(
-        Ipv4Addr::LOCALHOST,
-        LOOPBACK_PORT_BASE.saturating_add(port_offset as u16),
-    )
 }
 
 pub(crate) fn make_fifo(path: &Path) -> Result<(), Warning> {
