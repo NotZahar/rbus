@@ -72,6 +72,15 @@ Suite report содержит p50/p90/p99/p99.9/p99.99 one-way latency, p50/p90/
 round-trip latency, throughput, payload throughput GiB/sec, CPU time, RSS/PSS,
 context switches, allocations/message, syscalls/message, warning counters,
 skipped messages, pinned-slot backpressure, startup latency и attach latency.
+Каждая строка suite по умолчанию запускается пять раз. Перед измеряемой частью
+каждый worker прогревает transport 64 сообщениями на publisher; эти сообщения не
+попадают в latency/throughput и не входят в `measured_messages`. Итоговые
+latency, throughput и resource metrics берутся как медиана независимых запусков,
+а syscall pass выполняется один раз на строку matrix. Warning/skipped/backpressure
+counters суммируются. Поэтому одиночный spike одного запуска не становится
+regression gate, но повторяемая деградация попадает в итоговую строку.
+Глубина stream-а считается из `warmup + measured + 1` и округляется вверх до
+степени двойки, чтобы прогрев не создавал искусственный gap.
 
 `syscalls/message` в suite не является константой wait mode. Для большинства
 результатов harness выполняет основной timing pass без `strace`, а затем
@@ -90,11 +99,9 @@ cargo run -p rbus-bench -- --suite --matrix-smoke --messages 1 --format csv --no
 ```
 
 Baseline для regression gates по умолчанию находится в
-`benches/baselines/rbus_suite_baseline_x86_64.csv`. Совместимый файл
-`benches/baselines/rbus_suite_baseline.csv` содержит то же x86_64-содержимое для
-старых команд, где путь был указан явно. Оба файла используют тот же CSV-формат,
-что и `rbus-bench --suite --format csv`, включая `publisher_count`,
-`subscriber_count` и `measured_messages`.
+`benches/baselines/rbus_suite_baseline_x86_64.csv`. Файл использует тот же
+CSV-формат, что и `rbus-bench --suite --format csv`, включая
+`publisher_count`, `subscriber_count` и `measured_messages`.
 
 Baseline в репозитории содержит строки для всей обязательной x86_64 matrix.
 Каждая строка фиксирует конкретные `scenario`/`transport`/`wait_mode`/topology,
@@ -111,8 +118,8 @@ suite.
 TypeScript-сценарии benchmark automation запускаются через контейнер:
 
 ```bash
-npm run bench:reference -- --messages 4
-npm run bench:perf -- --messages 4
+npm run bench:reference -- --messages 32 --runs 5
+npm run bench:perf -- --messages 32 --runs 5
 npm run bench:strace
 ```
 
@@ -121,8 +128,10 @@ npm run bench:strace
 `benches/baselines/rbus_suite_baseline_x86_64.csv`. Latency thresholds
 считаются из измерения как `max(2x, +50us)`, throughput thresholds как 80% от
 измерения, а `syscalls/message` ceiling как `1.25x + 16`; нулевой syscall
-threshold для `rbus` + `busy-poll` остаётся нулём. `bench:perf` запускает suite
-с regression gate против этого baseline. `bench:strace` запускает hot-path
-syscall regression и короткий suite `strace -c` pass для baseline transport-ов.
-Для быстрой локальной проверки reference/perf можно добавить `--matrix-smoke`,
-но такой CSV предназначен только для smoke-профиля.
+threshold для `rbus` + `busy-poll` остаётся нулём. Опция `--runs` управляет
+количеством независимых запусков каждой строки matrix; значение по умолчанию
+равно 5. `bench:perf` запускает suite с regression gate против этого baseline.
+`bench:strace` запускает hot-path syscall regression и короткий suite
+`strace -c` pass для baseline transport-ов. Для быстрой локальной проверки
+reference/perf можно добавить `--matrix-smoke`, но такой CSV предназначен только
+для smoke-профиля.

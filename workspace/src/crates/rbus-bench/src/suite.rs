@@ -17,6 +17,8 @@ use crate::suite_ready::{
     create_ready_directory, ready_directory, ready_file, remove_ready_directory, wait_ready_files,
     wait_ready_files_or_worker_exit,
 };
+use crate::suite_repetition::aggregate_repeated_results;
+use crate::suite_worker_output::ParsedWorkerOutput;
 use crate::syscall_measurement::{SyscallMeasurementContext, measure_syscalls_per_message};
 use crate::system_metrics::monotonic_time_ns;
 use crate::topology::{ScenarioKind, Topology};
@@ -43,15 +45,24 @@ pub fn run_suite(options: &SuiteOptions) -> Result<SuiteReport, Warning> {
             for wait_mode in wait_modes {
                 for transport in transports {
                     if transport.supports_scenario(topology.kind) {
-                        results.push(run_topology(
-                            options,
-                            *topology,
-                            *payload_size,
-                            *wait_mode,
-                            *transport,
-                            run_index,
-                        )?);
-                        run_index = run_index.saturating_add(1);
+                        let mut repeated_results =
+                            Vec::with_capacity(options.runs_per_scenario as usize);
+                        let mut syscalls_per_message = None;
+                        for _run_index in 0..options.runs_per_scenario {
+                            let result = run_topology(
+                                options,
+                                *topology,
+                                *payload_size,
+                                *wait_mode,
+                                *transport,
+                                run_index,
+                                syscalls_per_message,
+                            )?;
+                            syscalls_per_message = Some(result.syscalls_per_message);
+                            repeated_results.push(result);
+                            run_index = run_index.saturating_add(1);
+                        }
+                        results.push(aggregate_repeated_results(&mut repeated_results));
                     }
                 }
             }
@@ -89,6 +100,7 @@ fn run_topology(
     wait_mode: WaitMode,
     transport: TransportKind,
     run_index: usize,
+    syscalls_per_message: Option<f64>,
 ) -> Result<BenchmarkResult, Warning> {
     let domain = format!("{SUITE_DOMAIN_PREFIX}-{}-{run_index}", std::process::id());
     let topic = format!("/bench/suite/{run_index}/data");
@@ -116,6 +128,7 @@ fn run_topology(
         ready_directory: &ready_directory,
         startup_latency_ns,
         run_index,
+        syscalls_per_message,
     };
     let result = match topology.kind {
         ScenarioKind::OneWay | ScenarioKind::SlowSubscriber => run_one_way(scenario_context)?,
@@ -316,15 +329,18 @@ fn aggregate_result(
     if aggregate.warnings != 0 {
         return Err(warning("aggregate_result::warnings"));
     }
-    let syscalls_per_message = measure_syscalls_per_message(SyscallMeasurementContext {
-        run_index: context.run_index,
-        topology: context.topology,
-        transport: context.transport,
-        wait_mode: context.wait_mode,
-        payload_size: context.payload_size,
-        depth: context.depth,
-        messages_per_publisher: context.options.messages_per_publisher,
-    })?;
+    let syscalls_per_message = match context.syscalls_per_message {
+        Some(value) => value,
+        None => measure_syscalls_per_message(SyscallMeasurementContext {
+            run_index: context.run_index,
+            topology: context.topology,
+            transport: context.transport,
+            wait_mode: context.wait_mode,
+            payload_size: context.payload_size,
+            depth: context.depth,
+            messages_per_publisher: context.options.messages_per_publisher,
+        })?,
+    };
     let mut round_trip_samples = round_trip_samples;
     Ok(BenchmarkResult::from_samples(
         BenchmarkResultContext {
@@ -558,21 +574,6 @@ fn warning_from_io(error: std::io::Error, operation: &'static str) -> Warning {
     }
 }
 
-#[derive(Clone, Debug)]
-struct ParsedWorkerOutput {
-    report: Option<WorkerReport>,
-    latencies: Vec<u64>,
-}
-
-impl ParsedWorkerOutput {
-    fn clone_report_only(&self) -> Self {
-        Self {
-            report: self.report,
-            latencies: Vec::new(),
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 struct ScenarioContext<'a> {
     options: &'a SuiteOptions,
@@ -587,4 +588,5 @@ struct ScenarioContext<'a> {
     ready_directory: &'a Path,
     startup_latency_ns: u64,
     run_index: usize,
+    syscalls_per_message: Option<f64>,
 }

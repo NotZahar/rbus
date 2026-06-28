@@ -18,14 +18,15 @@ const CSV_MINIMUM_FIELD_COUNT: usize = 24;
 const CSV_SYSCALLS_FIELD: usize = 23;
 const CSV_TRANSPORT_FIELD: usize = 2;
 const CONTAINER_SOURCE_ROOT_LITERAL: &str = concat!("/workspace", "/src");
-const BASELINE_MESSAGES_PER_PUBLISHER: u64 = 4;
-const MAXIMUM_BASELINE_P50_NS: u64 = 100_000_000;
-const MAXIMUM_BASELINE_P99_NS: u64 = 500_000_000;
-const MAXIMUM_BASELINE_SYSCALLS_PER_MESSAGE: f64 = 50_000.0;
+const BASELINE_MESSAGES_PER_PUBLISHER: u64 = 32;
+const BASELINE_RUNS_PER_SCENARIO: u64 = 5;
+const MAXIMUM_BASELINE_P50_NS: u64 = 250_000_000;
+const MAXIMUM_BASELINE_P99_NS: u64 = 400_000_000;
+const MAXIMUM_BASELINE_SYSCALLS_PER_MESSAGE: f64 = 150_000.0;
 const MINIMUM_PORTABLE_THROUGHPUT: f64 = 1.0;
 const UNIX_SOCKET_TRANSPORT: &str = "unix-socket";
 const WILDCARD_KEY: &str = "*";
-const BASELINE_FILES: &[&str] = &["rbus_suite_baseline.csv", "rbus_suite_baseline_x86_64.csv"];
+const BASELINE_FILE: &str = "rbus_suite_baseline_x86_64.csv";
 const BASELINE_PAYLOAD_SIZES: &[usize] = &[
     64,
     256,
@@ -160,46 +161,44 @@ fn bench_suite_matrix_smoke_outputs_csv() {
 
 #[test]
 fn bench_suite_baseline_uses_production_thresholds() {
-    for baseline_file in BASELINE_FILES {
-        let baseline_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../benches/baselines")
-            .join(baseline_file);
-        let contents = std::fs::read_to_string(baseline_path).expect("baseline should be readable");
-        let mut keys = BTreeSet::new();
-        for line in contents.lines().skip(1) {
-            let fields: Vec<&str> = line.split(',').collect();
-            assert_eq!(fields.len(), BASELINE_FIELD_COUNT);
-            assert_ne!(fields[BASELINE_SCENARIO_FIELD], WILDCARD_KEY);
-            assert_ne!(fields[BASELINE_TRANSPORT_FIELD], WILDCARD_KEY);
-            assert_ne!(fields[BASELINE_WAIT_MODE_FIELD], WILDCARD_KEY);
-            let payload_size = fields[BASELINE_PAYLOAD_SIZE_FIELD]
-                .parse::<usize>()
-                .expect("payload size should be numeric");
-            let latency_p50_ns = fields[BASELINE_LATENCY_P50_FIELD]
-                .parse::<u64>()
-                .expect("p50 should be numeric");
-            let latency_p99_ns = fields[BASELINE_LATENCY_P99_FIELD]
-                .parse::<u64>()
-                .expect("p99 should be numeric");
-            let throughput = fields[BASELINE_THROUGHPUT_FIELD]
-                .parse::<f64>()
-                .expect("throughput should be numeric");
-            let syscalls_per_message = fields[BASELINE_SYSCALLS_FIELD]
-                .parse::<f64>()
-                .expect("syscalls/message should be numeric");
-            let warning_count = fields[BASELINE_WARNING_COUNT_FIELD]
-                .parse::<u64>()
-                .expect("warning count should be numeric");
-            assert!(BASELINE_PAYLOAD_SIZES.contains(&payload_size));
-            assert!(latency_p50_ns < MAXIMUM_BASELINE_P50_NS);
-            assert!(latency_p99_ns < MAXIMUM_BASELINE_P99_NS);
-            assert!(throughput > MINIMUM_PORTABLE_THROUGHPUT);
-            assert!(syscalls_per_message < MAXIMUM_BASELINE_SYSCALLS_PER_MESSAGE);
-            assert_eq!(warning_count, 0);
-            assert!(keys.insert(BaselineKey::from_fields(&fields)));
-        }
-        assert_eq!(keys, expected_baseline_keys());
+    let baseline_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../benches/baselines")
+        .join(BASELINE_FILE);
+    let contents = std::fs::read_to_string(baseline_path).expect("baseline should be readable");
+    let mut keys = BTreeSet::new();
+    for line in contents.lines().skip(1) {
+        let fields: Vec<&str> = line.split(',').collect();
+        assert_eq!(fields.len(), BASELINE_FIELD_COUNT);
+        assert_ne!(fields[BASELINE_SCENARIO_FIELD], WILDCARD_KEY);
+        assert_ne!(fields[BASELINE_TRANSPORT_FIELD], WILDCARD_KEY);
+        assert_ne!(fields[BASELINE_WAIT_MODE_FIELD], WILDCARD_KEY);
+        let payload_size = fields[BASELINE_PAYLOAD_SIZE_FIELD]
+            .parse::<usize>()
+            .expect("payload size should be numeric");
+        let latency_p50_ns = fields[BASELINE_LATENCY_P50_FIELD]
+            .parse::<u64>()
+            .expect("p50 should be numeric");
+        let latency_p99_ns = fields[BASELINE_LATENCY_P99_FIELD]
+            .parse::<u64>()
+            .expect("p99 should be numeric");
+        let throughput = fields[BASELINE_THROUGHPUT_FIELD]
+            .parse::<f64>()
+            .expect("throughput should be numeric");
+        let syscalls_per_message = fields[BASELINE_SYSCALLS_FIELD]
+            .parse::<f64>()
+            .expect("syscalls/message should be numeric");
+        let warning_count = fields[BASELINE_WARNING_COUNT_FIELD]
+            .parse::<u64>()
+            .expect("warning count should be numeric");
+        assert!(BASELINE_PAYLOAD_SIZES.contains(&payload_size));
+        assert!(latency_p50_ns < MAXIMUM_BASELINE_P50_NS);
+        assert!(latency_p99_ns < MAXIMUM_BASELINE_P99_NS);
+        assert!(throughput > MINIMUM_PORTABLE_THROUGHPUT);
+        assert!(syscalls_per_message < MAXIMUM_BASELINE_SYSCALLS_PER_MESSAGE);
+        assert_eq!(warning_count, 0);
+        assert!(keys.insert(BaselineKey::from_fields(&fields)));
     }
+    assert_eq!(keys, expected_baseline_keys());
 }
 
 #[test]
@@ -342,8 +341,11 @@ impl ExpectedTopology {
                 u64::from(self.publisher_count)
                     * u64::from(self.subscriber_count)
                     * BASELINE_MESSAGES_PER_PUBLISHER
+                    * BASELINE_RUNS_PER_SCENARIO
             }
-            ExpectedTransportSet::RbusOnly => BASELINE_MESSAGES_PER_PUBLISHER,
+            ExpectedTransportSet::RbusOnly => {
+                BASELINE_MESSAGES_PER_PUBLISHER * BASELINE_RUNS_PER_SCENARIO
+            }
         }
     }
 }

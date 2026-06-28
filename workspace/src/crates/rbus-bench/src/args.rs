@@ -7,7 +7,8 @@ use crate::hot_path_syscall::HotPathOperation;
 use crate::output_format::OutputFormat;
 use crate::worker::{WorkerArguments, WorkerRole};
 
-const DEFAULT_MESSAGES_PER_PUBLISHER: u32 = 4;
+const DEFAULT_MESSAGES_PER_PUBLISHER: u32 = 32;
+const DEFAULT_RUNS_PER_SCENARIO: u32 = 5;
 
 /// Benchmark metadata
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -23,6 +24,8 @@ pub struct SuiteOptions {
     pub output_format: OutputFormat,
     /// Publisher runtime metadata
     pub messages_per_publisher: u32,
+    /// Benchmark metadata
+    pub runs_per_scenario: u32,
     /// Baseline CSV path
     pub baseline_path: PathBuf,
     /// Internal documentation
@@ -54,6 +57,7 @@ impl Default for SuiteOptions {
         Self {
             output_format: OutputFormat::Json,
             messages_per_publisher: DEFAULT_MESSAGES_PER_PUBLISHER,
+            runs_per_scenario: DEFAULT_RUNS_PER_SCENARIO,
             baseline_path: PathBuf::from(DEFAULT_BASELINE_PATH),
             gate_enabled: true,
             matrix_smoke: false,
@@ -109,7 +113,9 @@ impl BenchArguments {
 
 fn print_help() {
     println!("rbus-bench --smoke");
-    println!("rbus-bench --suite [--format json|csv] [--messages N] [--baseline PATH] [--no-gate]");
+    println!(
+        "rbus-bench --suite [--format json|csv] [--messages N] [--runs N] [--baseline PATH] [--no-gate]"
+    );
     println!("rbus-bench --hot-path-syscall-probe <publish|try-recv>");
 }
 
@@ -137,6 +143,15 @@ where
             "--baseline" => {
                 options.baseline_path =
                     PathBuf::from(iterator.next().ok_or_else(invalid_argument_warning)?);
+            }
+            "--runs" => {
+                let value = iterator.next().ok_or_else(invalid_argument_warning)?;
+                options.runs_per_scenario = value
+                    .parse::<u32>()
+                    .map_err(|_| invalid_argument_warning())?;
+                if options.runs_per_scenario == 0 {
+                    return Err(invalid_argument_warning());
+                }
             }
             "--no-gate" => options.gate_enabled = false,
             "--matrix-smoke" => options.matrix_smoke = true,

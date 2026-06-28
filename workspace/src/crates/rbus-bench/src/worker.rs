@@ -17,7 +17,7 @@ const BUSY_POLL_PUBLISHER_STREAM_LINGER_MS: u64 = 500;
 const READY_FILE_BYTES: &[u8] = b"ready\n";
 const RECV_TIMEOUT_MS: u64 = 5_000;
 const TIMESTAMP_BYTES: usize = core::mem::size_of::<u64>();
-const WARMUP_MESSAGES_PER_PUBLISHER: u32 = 2;
+const WARMUP_MESSAGES_PER_PUBLISHER: u32 = 64;
 
 pub const LATENCY_PREFIX: &str = "RBUS_BENCH_LATENCY_NS ";
 pub const RESULT_PREFIX: &str = "RBUS_BENCH_WORKER_RESULT ";
@@ -258,6 +258,11 @@ fn run_ping_responder(arguments: &WorkerArguments) -> Result<WorkerReport, Warni
     let publisher = bus.publisher(&arguments.response_topic, topic_config(arguments))?;
     write_ready_file(arguments)?;
     let mut publish_bytes_buffer = vec![FILL_BYTE; arguments.payload_size];
+    for _message_index in 0..WARMUP_MESSAGES_PER_PUBLISHER {
+        let message = receive_message(arguments.wait_mode, &subscriber)?;
+        let sent_at = decode_timestamp(message.as_slice())?;
+        publish_timestamped(arguments, &publisher, &mut publish_bytes_buffer, sent_at)?;
+    }
     let total_messages = u64::from(arguments.messages_per_publisher);
     let system_start = ProcessSystemSnapshot::capture()?;
     let allocation_start = allocation::allocation_count();
@@ -293,6 +298,11 @@ fn run_ping_requester(arguments: &WorkerArguments) -> Result<WorkerReport, Warni
     let publisher = bus.publisher(&arguments.topic, topic_config(arguments))?;
     let subscriber = bus.subscriber(&arguments.response_topic)?;
     let mut publish_bytes_buffer = vec![FILL_BYTE; arguments.payload_size];
+    for _message_index in 0..WARMUP_MESSAGES_PER_PUBLISHER {
+        let sent_at = monotonic_time_ns()?;
+        publish_timestamped(arguments, &publisher, &mut publish_bytes_buffer, sent_at)?;
+        drop(receive_message(arguments.wait_mode, &subscriber)?);
+    }
     let mut latencies = vec![0_u64; arguments.messages_per_publisher as usize];
     let system_start = ProcessSystemSnapshot::capture()?;
     let allocation_start = allocation::allocation_count();

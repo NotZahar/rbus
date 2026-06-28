@@ -3,6 +3,10 @@
 Полный suite запускает реальные процессы `rbusd`, publishers и subscribers для
 всей матрицы payload/topology/wait mode. JSON/CSV вывод формируется процессом
 родителем после агрегации stdout worker-ов.
+По умолчанию каждая строка matrix выполняется пять раз, а latency/throughput и
+resource metrics попадают в report как медиана независимых запусков. Syscall
+pass выполняется один раз на строку matrix. Перед измерением worker-ы прогревают
+transport 64 сообщениями на publisher.
 
 Команда короткой проверки:
 

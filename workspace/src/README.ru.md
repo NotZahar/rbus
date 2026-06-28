@@ -36,7 +36,9 @@ npm run hot-path:syscalls
 ```
 
 `bench:reference` и `bench:perf` по умолчанию используют x86_64 baseline
-`benches/baselines/rbus_suite_baseline_x86_64.csv`.
+`benches/baselines/rbus_suite_baseline_x86_64.csv` и делают пять независимых
+запуска каждой строки benchmark matrix. Перед измерением каждый worker
+прогревает transport 64 сообщениями на publisher.
 
 ## Daemon и CLI
 

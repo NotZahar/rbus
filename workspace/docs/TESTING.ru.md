@@ -26,8 +26,8 @@ npm run bench:suite-smoke
 Benchmark regression-профили запускаются отдельными TypeScript-сценариями:
 
 ```bash
-npm run bench:reference -- --messages 4
-npm run bench:perf -- --messages 4
+npm run bench:reference -- --messages 32 --runs 5
+npm run bench:perf -- --messages 32 --runs 5
 npm run bench:strace
 ```
 
@@ -37,7 +37,10 @@ npm run bench:strace
 совмещает hot-path syscall smoke и короткий suite pass, где
 `syscalls/message` снимается через `strace -c`. Reference CSV хранит thresholds:
 latency `max(2x, +50us)`, throughput 80% от измерения и syscall ceiling
-`1.25x + 16`.
+`1.25x + 16`. Suite по умолчанию делает пять независимых запусков каждой строки и
+берёт медиану latency/throughput/resource metrics, чтобы одиночный spike не
+ломал gate. Syscall pass выполняется один раз на строку matrix. Перед измерением
+каждый worker прогревает transport 64 сообщениями на publisher.
 
 Benchmark TypeScript-скрипты не содержат абсолютный container source path:
 корень `workspace/src` вычисляется от расположения файла

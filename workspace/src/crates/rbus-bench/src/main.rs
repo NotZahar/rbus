@@ -15,6 +15,8 @@ mod scenarios;
 mod suite;
 mod suite_matrix;
 mod suite_ready;
+mod suite_repetition;
+mod suite_worker_output;
 mod syscall_measurement;
 mod system_metrics;
 mod topology;

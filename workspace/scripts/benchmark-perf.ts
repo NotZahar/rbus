@@ -7,7 +7,8 @@ import { workspacePaths } from "./workspace-paths.ts";
 
 const defaultBaselinePath = "benches/baselines/rbus_suite_baseline_x86_64.csv";
 const defaultFormat = "json";
-const defaultMessages = "4";
+const defaultMessages = "32";
+const defaultRuns = "5";
 
 class ScriptError extends Error {
   readonly exitCode: number;
@@ -24,6 +25,7 @@ type PerfOptions = {
   format: string;
   matrixSmoke: boolean;
   messages: string;
+  runs: string;
 };
 
 function parseArguments(argumentsList: string[]): PerfOptions {
@@ -32,6 +34,7 @@ function parseArguments(argumentsList: string[]): PerfOptions {
     format: defaultFormat,
     matrixSmoke: false,
     messages: defaultMessages,
+    runs: defaultRuns,
   };
 
   for (let index = 0; index < argumentsList.length; index += 1) {
@@ -52,6 +55,10 @@ function parseArguments(argumentsList: string[]): PerfOptions {
         index += 1;
         options.messages = requireValue(argumentsList[index], argument);
         break;
+      case "--runs":
+        index += 1;
+        options.runs = requireValue(argumentsList[index], argument);
+        break;
       default:
         throw new ScriptError(`unknown argument: ${argument}`);
     }
@@ -62,6 +69,9 @@ function parseArguments(argumentsList: string[]): PerfOptions {
   }
   if (!/^[1-9][0-9]*$/.test(options.messages)) {
     throw new ScriptError(`invalid --messages value: ${options.messages}`);
+  }
+  if (!/^[1-9][0-9]*$/.test(options.runs)) {
+    throw new ScriptError(`invalid --runs value: ${options.runs}`);
   }
   return options;
 }
@@ -91,6 +101,8 @@ function runPerf(options: PerfOptions) {
     "--suite",
     "--messages",
     options.messages,
+    "--runs",
+    options.runs,
     "--format",
     options.format,
     "--baseline",

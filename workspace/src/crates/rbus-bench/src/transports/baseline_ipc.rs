@@ -94,6 +94,12 @@ fn run_ping_responder(arguments: &WorkerArguments) -> Result<WorkerReport, Warni
     let mut sender =
         BaselineSender::connect_to_subscriber(arguments, &arguments.response_topic, 0)?;
     let mut payload = vec![0_u8; arguments.payload_size];
+    for _message_index in 0..warmup_messages_per_publisher() {
+        receiver.receive(&mut payload)?;
+        let timestamp_ns = decode_timestamp(&payload)?;
+        encode_timestamp(&mut payload, timestamp_ns)?;
+        sender.send(&payload)?;
+    }
     measure_report(u64::from(arguments.messages_per_publisher), || {
         for _message_index in 0..arguments.messages_per_publisher {
             receiver.receive(&mut payload)?;
@@ -110,6 +116,10 @@ fn run_ping_requester(arguments: &WorkerArguments) -> Result<WorkerReport, Warni
     let mut sender = BaselineSender::connect_to_subscriber(arguments, &arguments.topic, 0)?;
     receiver.accept(1)?;
     let mut payload = vec![FILL_BYTE; arguments.payload_size];
+    for _message_index in 0..warmup_messages_per_publisher() {
+        send_timestamped(&mut sender, &mut payload)?;
+        receiver.receive(&mut payload)?;
+    }
     let mut latencies = vec![0_u64; arguments.messages_per_publisher as usize];
     let report = measure_report(u64::from(arguments.messages_per_publisher), || {
         for latency in &mut latencies {

@@ -7,7 +7,8 @@ import { resolve } from "node:path";
 import { workspacePaths } from "./workspace-paths.ts";
 
 const defaultOutputPath = "benches/baselines/rbus_suite_baseline_x86_64.csv";
-const defaultMessages = "4";
+const defaultMessages = "32";
+const defaultRuns = "5";
 const csvFieldCount = 30;
 const latencyThresholdMultiplier = 2;
 const latencyThresholdPaddingNs = 50_000;
@@ -34,6 +35,7 @@ class ScriptError extends Error {
 type ReferenceOptions = {
   messages: string;
   outputPath: string;
+  runs: string;
   matrixSmoke: boolean;
 };
 
@@ -41,6 +43,7 @@ function parseArguments(argumentsList: string[]): ReferenceOptions {
   const options: ReferenceOptions = {
     messages: defaultMessages,
     outputPath: defaultOutputPath,
+    runs: defaultRuns,
     matrixSmoke: false,
   };
 
@@ -55,6 +58,10 @@ function parseArguments(argumentsList: string[]): ReferenceOptions {
         index += 1;
         options.outputPath = requireValue(argumentsList[index], argument);
         break;
+      case "--runs":
+        index += 1;
+        options.runs = requireValue(argumentsList[index], argument);
+        break;
       case "--matrix-smoke":
         options.matrixSmoke = true;
         break;
@@ -65,6 +72,9 @@ function parseArguments(argumentsList: string[]): ReferenceOptions {
 
   if (!/^[1-9][0-9]*$/.test(options.messages)) {
     throw new ScriptError(`invalid --messages value: ${options.messages}`);
+  }
+  if (!/^[1-9][0-9]*$/.test(options.runs)) {
+    throw new ScriptError(`invalid --runs value: ${options.runs}`);
   }
   return options;
 }
@@ -94,7 +104,16 @@ function runCommand(command: string, commandArguments: string[], captureStdout: 
 
 function runReference(options: ReferenceOptions) {
   runCommand("cargo", ["build", "-p", "rbusd", "-p", "rbus-bench"], false);
-  const suiteArguments = ["--suite", "--messages", options.messages, "--format", "csv", "--no-gate"];
+  const suiteArguments = [
+    "--suite",
+    "--messages",
+    options.messages,
+    "--runs",
+    options.runs,
+    "--format",
+    "csv",
+    "--no-gate",
+  ];
   if (options.matrixSmoke) {
     suiteArguments.splice(1, 0, "--matrix-smoke");
   }
@@ -103,7 +122,13 @@ function runReference(options: ReferenceOptions) {
   const rows = validateCsv(thresholdCsv);
   const outputPath = resolve(workspacePaths.sourceRoot, options.outputPath);
   writeFileSync(outputPath, thresholdCsv);
-  console.log(JSON.stringify({ status: "ok", output: outputPath, rows, messages: Number(options.messages) }));
+  console.log(JSON.stringify({
+    status: "ok",
+    output: outputPath,
+    rows,
+    messages: Number(options.messages),
+    runs: Number(options.runs),
+  }));
 }
 
 function validateCsv(csv: string) {
