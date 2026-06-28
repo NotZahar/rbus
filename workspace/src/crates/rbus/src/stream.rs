@@ -437,8 +437,8 @@ pub(crate) enum ReadAttempt {
 mod tests {
     use rbus_core::constants::{SHARED_MEMORY_ABI_VERSION, SHARED_MEMORY_MAGIC};
     use rbus_core::ids::{PublisherId, StreamId, TopicHash};
-    use rbus_core::warning::Warning;
-    use rbus_ipc::stream_segment::create_stream_segment;
+    use rbus_core::warning::{Warning, WarningCode};
+    use rbus_ipc::stream_segment::{create_stream_segment, mark_stream_closed};
 
     use crate::stream::StreamInner;
 
@@ -484,6 +484,36 @@ mod tests {
         );
         assert_eq!(header.slots_offset as usize, stream.layout.slots_offset);
         assert_eq!(header.payload_offset as usize, stream.layout.payload_offset);
+        Ok(())
+    }
+
+    #[test]
+    fn disconnected_warning_path_increments_total_on_closed_stream() -> Result<(), Warning> {
+        let created_segment = create_stream_segment(
+            PublisherId::new(7),
+            StreamId::new(13),
+            TopicHash::new(11),
+            256,
+            8,
+        )?;
+        let stream = StreamInner::attach(
+            created_segment.metadata,
+            13,
+            &created_segment.file_descriptor,
+            0,
+        )?;
+        mark_stream_closed(&created_segment.file_descriptor, created_segment.metadata)?;
+
+        let warning = match stream.try_begin_loan(1) {
+            Ok(_) => panic!("operation should return warning"),
+            Err(warning) => warning,
+        };
+        let stats = stream.stats();
+
+        assert_eq!(warning.code(), WarningCode::Disconnected);
+        assert_eq!(stats.warnings_total, 1);
+        assert_eq!(stats.disconnected_streams, 1);
+        assert!(!stats.publisher_alive);
         Ok(())
     }
 }

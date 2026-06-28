@@ -62,6 +62,13 @@ round-trip latency, throughput, payload throughput GiB/sec, CPU time, RSS/PSS,
 context switches, allocations/message, syscalls/message, warning counters,
 skipped messages, pinned-slot backpressure, startup latency и attach latency.
 
+`syscalls/message` в suite не является константой wait mode. Для каждого результата
+harness выполняет основной timing pass без `strace`, а затем отдельный syscall pass
+той же topology/transport/wait mode через `strace -c`. В отчёт попадает сумма
+syscall-ов всех worker-процессов, делённая на количество измеренных сообщений.
+Если `strace` недоступен, worker завершается с ошибкой или syscall pass видит
+warning counter, suite падает.
+
 Быстрая проверка multi-process harness:
 
 ```text
@@ -71,5 +78,6 @@ cargo run -p rbus-bench -- --suite --matrix-smoke --messages 1 --format csv --no
 Baseline для regression gates находится в
 `benches/baselines/rbus_suite_baseline.csv`. Gate проверяет p50/p99 latency,
 throughput, allocations/message, syscalls/message и warning count. Portable
-baseline в репозитории использует wildcard-строки; на reference host его нужно
-заменить exact baseline-ами с тем же CSV-форматом после контрольного прогона.
+baseline в репозитории задаёт реальные верхние latency/syscall и нижние throughput
+пороги вместо smoke-заглушек; на reference host его можно заменить exact
+baseline-ами с тем же CSV-форматом после контрольного прогона.

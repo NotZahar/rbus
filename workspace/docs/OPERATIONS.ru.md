@@ -7,6 +7,42 @@ rbusd --domain default
 systemctl --user start rbusd@default.service
 ```
 
+## Установка systemd user unit
+
+Unit-файлы лежат в `systemd/` внутри исходного дерева. Для установки в user
+systemd без прав root:
+
+```bash
+install -Dm0644 systemd/rbusd@.service "$HOME/.config/systemd/user/rbusd@.service"
+install -Dm0644 systemd/rbusd.socket "$HOME/.config/systemd/user/rbusd.socket"
+systemctl --user daemon-reload
+systemctl --user enable --now rbusd@default.service
+systemctl --user status rbusd@default.service
+test -S "${XDG_RUNTIME_DIR}/rbus/default.sock"
+```
+
+`rbusd@.service` является основным эксплуатационным unit-ом. Instance name
+становится domain-ом: `rbusd@default.service` запускает
+`rbusd --domain default`, `rbusd@robot.service` запускает domain `robot`.
+Бинарь должен быть установлен в `%h/.cargo/bin/rbusd`, как указано в
+`ExecStart`. После обновления бинаря достаточно выполнить:
+
+```bash
+systemctl --user restart rbusd@default.service
+```
+
+`rbusd.socket` устанавливается вместе с service unit-ом и фиксирует ожидаемый
+default socket `%t/rbus/default.sock` с mode `0600`. В текущей реализации
+daemon сам bind-ит Unix socket, поэтому обычный запуск выполняется через
+`rbusd@<domain>.service`, а не через socket activation.
+
+Отключение user unit-а:
+
+```bash
+systemctl --user disable --now rbusd@default.service
+systemctl --user daemon-reload
+```
+
 Обычный запуск остаётся в foreground и bind-ит Unix socket domain-а:
 `/run/user/<effective-uid>/rbus/<domain>.sock`. Каталог `/run/user/<uid>` должен
 существовать, принадлежать этому UID и иметь права `0700`; socket directory

@@ -58,6 +58,13 @@ Lifecycle registry проверяется отдельными тестами:
 `publisher_stream_is_removed_after_session_close` закрывает publisher session и
 ждёт удаления stream-а из `ATTACH_STREAMS`.
 
+Warning coverage разделён на два уровня. `warning_path_coverage_tests.rs`
+фиксирует, что каждый `WarningCode` имеет отдельный воспроизводимый path-тест с
+описанной проверкой counters/state. Реальные warning-path тесты находятся рядом
+с владельцами поведения: data-plane counters в `crates/rbus/tests`, закрытый
+stream branch в `crates/rbus/src/stream.rs`, IPC warning paths в
+`crates/rbus-ipc/tests`, benchmark timeout в `crates/rbus-bench/tests`.
+
 Crash recovery покрыт `crates/rbus/tests/crash_recovery_tests.rs`. Тесты
 используют `fork` и `SIGKILL`: subscriber crash удерживает `MessageRef` на
 single-slot stream-е, после чего parent ждёт, что `rbusd` очистит
@@ -87,13 +94,17 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | `mmap MAP_SHARED` | `crates/rbus-ipc/src/mmap.rs` | `crates/rbus-ipc/tests/mmap_tests.rs` |
 | `SCM_RIGHTS` FD passing | `crates/rbus-ipc/src/scm_rights.rs` | `crates/rbus-ipc/tests/scm_rights_tests.rs` |
 | `futex` wake/warning path | `crates/rbus-ipc/src/futex.rs` | `crates/rbus-ipc/tests/futex_tests.rs` |
+| WarningCode coverage catalog | `crates/rbus-core/src/warning.rs` | `every_warning_code_has_reproducible_warning_path_coverage` |
+| IPC warning paths и state checks | `crates/rbus-ipc/src/{control,futex,mmap,permissions,stream_segment}.rs` | `crates/rbus-ipc/tests/warning_path_tests.rs` |
 | Commit timestamp metadata | `crates/rbus/src/stream.rs` | `loaned_publish_makes_payload_visible_to_subscriber` |
 | mmap-backed stream header | `crates/rbus/src/stream.rs` | `stream_initializes_shared_memory_segment_header` |
+| Data-plane warning counters/state | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `crates/rbus/tests/warning_path_tests.rs`, `disconnected_warning_path_increments_total_on_closed_stream` |
 | Atomic slot protocols | `crates/rbus-core/src/atomic/ordering.rs`, `crates/rbus/src/stream.rs` | `crates/rbus-core/tests/atomic_protocol_model_tests.rs` |
 | Gap handling продвигает subscriber cursor | `crates/rbus/src/{stream.rs,subscriber.rs}` | `subscriber_cursor_moves_to_oldest_available_message_after_gap_warning` |
 | 0 allocations в zero-copy hot path | `crates/rbus/src/{publisher.rs,subscriber.rs,stream.rs}` | `zero_copy_hot_path_does_not_allocate` |
 | 0 syscalls в non-blocking hot path | `crates/rbus-bench/src/hot_path_syscall.rs` | `workspace/scripts/hot-path-syscall-smoke.ts` |
 | Multi-process benchmark suite smoke | `crates/rbus-bench/src/{suite.rs,worker.rs}` | `bench_suite_matrix_smoke_outputs_csv` |
+| Benchmark recv_timeout warning path | `crates/rbus-bench/src/worker.rs` | `bench_worker_recv_timeout_warning_path_is_fatal` |
 | Local IPC benchmark baselines | `crates/rbus-bench/src/transports/{baseline_ipc.rs,baseline_paths.rs,posix_queue.rs}` | `bench_suite_matrix_smoke_outputs_csv` |
 | Cross-process rbus data plane | `crates/rbus/src/control.rs`, `crates/rbusd/src/registry.rs` | `crates/rbus/tests/cross_process_data_plane_tests.rs` |
 | Workspace examples | `examples/*.rs`, `examples/src/lib.rs` | `examples/tests/examples_tests.rs` |
@@ -107,6 +118,7 @@ TypeScript-скрипт запускает `rbus-bench --hot-path-syscall-probe 
 | UNREGISTER happy/warning | `crates/rbusd/src/daemon.rs`, `crates/rbusd/src/registry.rs` | `unregister_happy_path_removes_publisher_stream`, `unregister_warning_path_rejects_unknown_publisher` |
 | rbusd lifecycle cleanup | `crates/rbusd/src/daemon.rs`, `crates/rbusd/src/registry.rs` | `subscriber_id_is_reused_after_session_close`, `publisher_stream_is_removed_after_session_close` |
 | rbusd explicit cleanup orphan records | `crates/rbusd/src/cleanup.rs` | `cleanup_removes_orphaned_subscriber_mask_bit` |
+| systemd user unit install check | `systemd/rbusd@.service`, `systemd/rbusd.socket` | `crates/rbusd/tests/systemd_unit_install_tests.rs` |
 | CLI без daemon-а не использует fallback | `crates/rbus-cli/src/control_client.rs` | `crates/rbus-cli/tests/list_tests.rs` |
 | CLI command help для каждой команды | `crates/rbus-cli/src/{args.rs,output.rs}` | `every_cli_command_prints_command_help` |
 | CLI success path с running daemon | `crates/rbus-cli/src/commands/*.rs`, `crates/rbusd/src/{inspect,stats,warnings,cleanup,doctor}.rs` | `every_cli_command_succeeds_with_running_daemon` |

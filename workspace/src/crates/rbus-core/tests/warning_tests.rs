@@ -2,6 +2,8 @@ use rbus_core::ids::{StreamId, TopicHash};
 use rbus_core::sequence::Sequence;
 use rbus_core::warning::{Warning, WarningCode};
 
+const TEST_OS_ERRNO: i32 = 5;
+
 #[test]
 fn every_warning_code_has_text() {
     for warning_code in WarningCode::all_codes() {
@@ -46,4 +48,32 @@ fn warning_fits_result_err_without_boxing() {
         core::mem::size_of::<Warning>() <= 96,
         "Warning should stay compact for RbusResult<T>"
     );
+}
+
+#[test]
+fn segment_quarantined_warning_path_preserves_context_state() {
+    let warning = Warning::new(
+        WarningCode::SegmentQuarantined,
+        "rbus-core",
+        "segment_quarantine",
+    )
+    .with_stream_id(StreamId::new(77));
+
+    assert_eq!(warning.code(), WarningCode::SegmentQuarantined);
+    assert_eq!(warning.stream_id(), Some(StreamId::new(77)));
+    assert_eq!(warning.message(), "segment is quarantined");
+}
+
+#[test]
+fn cleanup_incomplete_warning_path_preserves_context_state() {
+    let warning = Warning::new(
+        WarningCode::CleanupIncomplete,
+        "rbus-core",
+        "cleanup_incomplete",
+    )
+    .with_os_errno(TEST_OS_ERRNO);
+
+    assert_eq!(warning.code(), WarningCode::CleanupIncomplete);
+    assert_eq!(warning.os_errno(), Some(TEST_OS_ERRNO));
+    assert_eq!(warning.message(), "cleanup incomplete");
 }

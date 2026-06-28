@@ -46,7 +46,7 @@ impl Publisher {
     /// Internal documentation
     pub fn publish(&self, mut message: LoanedMessage<'_>) -> Result<Sequence, Warning> {
         if message.publisher_id != self.publisher_id() {
-            self.stream.rollback_loan(message.slot_index);
+            message.stream.rollback_loan(message.slot_index);
             message.mark_published();
             return Err(Warning::new(
                 WarningCode::InternalInvariantWarning,

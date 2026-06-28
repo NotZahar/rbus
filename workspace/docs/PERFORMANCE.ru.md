@@ -48,3 +48,8 @@ Probe `rbus-bench --hot-path-syscall-probe try-recv` заранее публик
 attach-ит stream и прогревает cursor. Между marker-ами выполняется только
 steady-state `Subscriber::try_recv` на уже attached stream-е; любые syscall-и
 между marker-ами считаются регрессией.
+
+Benchmark suite дополнительно измеряет `syscalls/message` для полной
+multi-process matrix. Это отдельный `strace -c` pass после основного timing pass,
+поэтому latency и throughput regression gate не искажаются overhead-ом трассировки,
+а syscall budget проверяется измерением реальных worker-процессов.

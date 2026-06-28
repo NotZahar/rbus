@@ -13,3 +13,7 @@ cargo run -p rbus-bench -- --suite --matrix-smoke --messages 1 --format csv --no
 Regression gate по умолчанию читает
 `benches/baselines/rbus_suite_baseline.csv` и проверяет p50/p99 latency,
 throughput, allocations/message, syscalls/message и warning count.
+
+Метрика `syscalls/message` заполняется отдельным `strace -c` прогоном той же
+топологии после основного timing pass. Основной прогон остаётся без трассировки,
+поэтому latency и throughput не включают overhead `strace`.

@@ -13,6 +13,7 @@ mod process;
 mod report;
 mod scenarios;
 mod suite;
+mod syscall_measurement;
 mod system_metrics;
 mod topology;
 mod transport_kind;

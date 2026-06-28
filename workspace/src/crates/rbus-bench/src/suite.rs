@@ -11,6 +11,7 @@ use crate::metrics::{BenchmarkResult, BenchmarkResultContext};
 use crate::output_format::OutputFormat;
 use crate::payload::PAYLOAD_SIZES;
 use crate::report::SuiteReport;
+use crate::syscall_measurement::{SyscallMeasurementContext, measure_syscalls_per_message};
 use crate::system_metrics::monotonic_time_ns;
 use crate::topology::{ScenarioKind, TOPOLOGIES, Topology};
 use crate::transport_kind::{SUITE_TRANSPORTS, TransportKind};
@@ -24,8 +25,6 @@ const DEPTH_MINIMUM: usize = 8;
 const READY_WAIT_ATTEMPTS: usize = 2_000;
 const READY_WAIT_POLL_INTERVAL_MS: u64 = 1;
 const SUITE_DOMAIN_PREFIX: &str = "rbus-suite";
-const SYS_CALLS_PER_BLOCKING_MESSAGE: f64 = 1.0;
-const SYS_CALLS_PER_BUSY_MESSAGE: f64 = 0.0;
 const WORKER_REPORT_FIELD_COUNT: usize = 11;
 const WORKER_TIMEOUT_MS: u64 = 60_000;
 
@@ -116,6 +115,7 @@ fn run_topology(
         response_topic: &response_topic,
         ready_directory: &ready_directory,
         startup_latency_ns,
+        run_index,
     };
     let result = match topology.kind {
         ScenarioKind::OneWay | ScenarioKind::SlowSubscriber => run_one_way(scenario_context)?,
@@ -264,6 +264,15 @@ fn aggregate_result(
     if aggregate.warnings != 0 {
         return Err(warning("aggregate_result::warnings"));
     }
+    let syscalls_per_message = measure_syscalls_per_message(SyscallMeasurementContext {
+        run_index: context.run_index,
+        topology: context.topology,
+        transport: context.transport,
+        wait_mode: context.wait_mode,
+        payload_size: context.payload_size,
+        depth: context.depth,
+        messages_per_publisher: context.options.messages_per_publisher,
+    })?;
     let mut round_trip_samples = round_trip_samples;
     Ok(BenchmarkResult::from_samples(
         BenchmarkResultContext {
@@ -280,7 +289,7 @@ fn aggregate_result(
             rss_bytes: aggregate.rss_bytes,
             pss_bytes: aggregate.pss_bytes,
             context_switches: aggregate.context_switches,
-            syscalls_per_message: syscall_metric(context.wait_mode),
+            syscalls_per_message,
             warning_count: aggregate.warnings,
             skipped_messages: aggregate.skipped_messages,
             backpressure_pinned_slot: aggregate.backpressure_pinned_slot,
@@ -495,14 +504,6 @@ fn depth_for(messages_per_publisher: u32) -> usize {
     DEPTH_MINIMUM.max(total_messages.next_power_of_two() as usize)
 }
 
-fn syscall_metric(wait_mode: WaitMode) -> f64 {
-    if wait_mode.uses_blocking_wait() {
-        SYS_CALLS_PER_BLOCKING_MESSAGE
-    } else {
-        SYS_CALLS_PER_BUSY_MESSAGE
-    }
-}
-
 fn selected_topologies(options: &SuiteOptions) -> &'static [Topology] {
     if options.matrix_smoke {
         &TOPOLOGIES[..1]
@@ -540,11 +541,7 @@ fn create_ready_directory(directory: &Path) -> Result<(), Warning> {
 }
 
 fn remove_ready_directory(directory: &Path) -> Result<(), Warning> {
-    if directory.exists() {
-        std::fs::remove_dir_all(directory)
-            .map_err(|error| warning_from_io(error, "ready_dir::remove"))?;
-    }
-    Ok(())
+    std::fs::remove_dir_all(directory).map_err(|error| warning_from_io(error, "ready_dir::remove"))
 }
 
 fn current_executable() -> Result<PathBuf, Warning> {
@@ -597,4 +594,5 @@ struct ScenarioContext<'a> {
     response_topic: &'a str,
     ready_directory: &'a Path,
     startup_latency_ns: u64,
+    run_index: usize,
 }
