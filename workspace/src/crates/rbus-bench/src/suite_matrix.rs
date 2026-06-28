@@ -57,15 +57,14 @@ pub(crate) fn selected_payload_sizes(options: &SuiteOptions) -> Vec<usize> {
 }
 
 pub(crate) fn selected_wait_modes(options: &SuiteOptions) -> Vec<WaitMode> {
-    WAIT_MODES
-        .iter()
-        .copied()
-        .take(1)
-        .filter(|wait_mode| match options.wait_mode_filter {
-            Some(filter) => filter == *wait_mode,
-            None => true,
-        })
-        .collect()
+    match options.wait_mode_filter {
+        Some(filter) => WAIT_MODES
+            .iter()
+            .copied()
+            .filter(|wait_mode| filter == *wait_mode)
+            .collect(),
+        None => WAIT_MODES.iter().copied().take(1).collect(),
+    }
 }
 
 pub(crate) fn selected_transports(options: &SuiteOptions) -> Vec<TransportKind> {
