@@ -29,3 +29,4 @@
 - Добавлен crash recovery: `rbusd` очищает dead subscriber bits в `readers_mask`, помечает dead publisher stream как closed и удаляет stale socket pathname при restart.
 - Добавлены fork/kill tests для crash subscriber с удержанным `MessageRef`, crash publisher и restart `rbusd` без остановки существующего data plane.
 - Добавлен custom allocator regression test, доказывающий 0 heap allocations для zero-copy `loan` + `publish`, `try_recv` с сообщением и `try_recv` без сообщения.
+- Benchmark regression gates переведены на полный CSV-формат suite report; добавлены TypeScript-сценарии `bench:reference`, `bench:perf` и `bench:strace`.

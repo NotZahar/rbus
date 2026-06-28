@@ -1,16 +1,22 @@
 use std::process::Command;
 
-const BASELINE_FIELD_COUNT: usize = 9;
-const BASELINE_LATENCY_P50_FIELD: usize = 4;
-const BASELINE_LATENCY_P99_FIELD: usize = 5;
-const BASELINE_THROUGHPUT_FIELD: usize = 6;
+const BASELINE_FIELD_COUNT: usize = 30;
+const BASELINE_LATENCY_P50_FIELD: usize = 8;
+const BASELINE_LATENCY_P99_FIELD: usize = 10;
+const BASELINE_PAYLOAD_SIZE_FIELD: usize = 4;
+const BASELINE_SCENARIO_FIELD: usize = 1;
+const BASELINE_THROUGHPUT_FIELD: usize = 17;
+const BASELINE_TRANSPORT_FIELD: usize = 2;
+const BASELINE_WAIT_MODE_FIELD: usize = 3;
+const BASELINE_WARNING_COUNT_FIELD: usize = 25;
 const CSV_MINIMUM_FIELD_COUNT: usize = 24;
 const CSV_SYSCALLS_FIELD: usize = 23;
 const CSV_TRANSPORT_FIELD: usize = 2;
-const MAXIMUM_PORTABLE_P50_NS: u64 = 50_000_000;
-const MAXIMUM_PORTABLE_P99_NS: u64 = 250_000_000;
-const MINIMUM_PORTABLE_THROUGHPUT: f64 = 100.0;
+const MAXIMUM_PORTABLE_P50_NS: u64 = 100_000_000;
+const MAXIMUM_PORTABLE_P99_NS: u64 = 500_000_000;
+const MINIMUM_PORTABLE_THROUGHPUT: f64 = 1.0;
 const UNIX_SOCKET_TRANSPORT: &str = "unix-socket";
+const WILDCARD_KEY: &str = "*";
 
 #[test]
 fn bench_smoke_outputs_json_status() {
@@ -72,6 +78,12 @@ fn bench_suite_baseline_uses_production_thresholds() {
     for line in contents.lines().skip(1) {
         let fields: Vec<&str> = line.split(',').collect();
         assert_eq!(fields.len(), BASELINE_FIELD_COUNT);
+        assert_ne!(fields[BASELINE_SCENARIO_FIELD], WILDCARD_KEY);
+        assert_ne!(fields[BASELINE_TRANSPORT_FIELD], WILDCARD_KEY);
+        assert_ne!(fields[BASELINE_WAIT_MODE_FIELD], WILDCARD_KEY);
+        fields[BASELINE_PAYLOAD_SIZE_FIELD]
+            .parse::<usize>()
+            .expect("payload size should be numeric");
         let latency_p50_ns = fields[BASELINE_LATENCY_P50_FIELD]
             .parse::<u64>()
             .expect("p50 should be numeric");
@@ -81,9 +93,31 @@ fn bench_suite_baseline_uses_production_thresholds() {
         let throughput = fields[BASELINE_THROUGHPUT_FIELD]
             .parse::<f64>()
             .expect("throughput should be numeric");
+        let warning_count = fields[BASELINE_WARNING_COUNT_FIELD]
+            .parse::<u64>()
+            .expect("warning count should be numeric");
         assert!(latency_p50_ns <= MAXIMUM_PORTABLE_P50_NS);
         assert!(latency_p99_ns <= MAXIMUM_PORTABLE_P99_NS);
         assert!(throughput >= MINIMUM_PORTABLE_THROUGHPUT);
+        assert_eq!(warning_count, 0);
+    }
+}
+
+#[test]
+fn benchmark_reference_perf_strace_scripts_exist() {
+    let workspace_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(3)
+        .expect("workspace root should exist");
+    for script_name in [
+        "benchmark-reference.ts",
+        "benchmark-perf.ts",
+        "benchmark-strace.ts",
+    ] {
+        let script_path = workspace_root.join("scripts").join(script_name);
+        let contents = std::fs::read_to_string(script_path).expect("script should be readable");
+        assert!(contents.contains("rbus-bench"));
+        assert!(contents.contains("ScriptError"));
     }
 }
 

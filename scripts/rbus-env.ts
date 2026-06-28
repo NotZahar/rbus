@@ -87,8 +87,17 @@ function printToolchain() {
 }
 
 function runCargo(commandArguments) {
-  const escapedArguments = commandArguments.map((argument) => `'${argument.replaceAll("'", "'\\''")}'`);
+  const escapedArguments = commandArguments.map(shellEscape);
   runInContainer(`cargo ${escapedArguments.join(" ")}`);
+}
+
+function shellEscape(argument) {
+  return `'${argument.replaceAll("'", "'\\''")}'`;
+}
+
+function runWorkspaceScript(scriptName, commandArguments = []) {
+  const escapedArguments = commandArguments.map(shellEscape);
+  runInContainer(`node /workspace/scripts/${scriptName} ${escapedArguments.join(" ")}`);
 }
 
 function runCheckSuite() {
@@ -114,6 +123,18 @@ function runHotPathSyscallSmoke() {
   runInContainer("node /workspace/scripts/hot-path-syscall-smoke.ts");
 }
 
+function runBenchmarkReference(commandArguments) {
+  runWorkspaceScript("benchmark-reference.ts", commandArguments);
+}
+
+function runBenchmarkPerf(commandArguments) {
+  runWorkspaceScript("benchmark-perf.ts", commandArguments);
+}
+
+function runBenchmarkStrace(commandArguments) {
+  runWorkspaceScript("benchmark-strace.ts", commandArguments);
+}
+
 function printUsage() {
   const packageMetadata = readFileSync(resolve(repositoryRoot, "package.json"), "utf8");
   const packageName = JSON.parse(packageMetadata).name;
@@ -129,6 +150,9 @@ function printUsage() {
   console.log("  doc                    RUSTDOCFLAGS='-D warnings' cargo doc --workspace --no-deps");
   console.log("  bench-smoke            short benchmark smoke");
   console.log("  bench-suite-smoke      short multi-process benchmark suite smoke");
+  console.log("  bench-reference        write benchmark reference baseline CSV");
+  console.log("  bench-perf             run benchmark suite with regression gates");
+  console.log("  bench-strace           run strace benchmark regressions");
   console.log("  hot-path-syscall-smoke strace regression for 0 syscalls in the hot path");
   console.log("  check                  full check suite");
 }
@@ -168,6 +192,15 @@ switch (command) {
     break;
   case "bench-suite-smoke":
     runBenchSuiteSmoke();
+    break;
+  case "bench-reference":
+    runBenchmarkReference(commandArguments);
+    break;
+  case "bench-perf":
+    runBenchmarkPerf(commandArguments);
+    break;
+  case "bench-strace":
+    runBenchmarkStrace(commandArguments);
     break;
   case "hot-path-syscall-smoke":
     runHotPathSyscallSmoke();

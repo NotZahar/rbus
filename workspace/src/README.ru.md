@@ -29,6 +29,9 @@ npm run fmt
 npm run clippy
 npm run test
 npm run bench:smoke
+npm run bench:reference -- --messages 4
+npm run bench:perf -- --messages 4
+npm run bench:strace
 npm run hot-path:syscalls
 ```
 

@@ -1,6 +1,6 @@
 use crate::metrics::BenchmarkResult;
 
-const CSV_HEADER: &str = concat!(
+pub(crate) const CSV_HEADER: &str = concat!(
     "status,scenario,transport,wait_mode,payload_size,publisher_count,subscriber_count,",
     "measured_messages,latency_p50_ns,latency_p90_ns,latency_p99_ns,",
     "latency_p999_ns,latency_p9999_ns,round_trip_p50_ns,round_trip_p90_ns,",

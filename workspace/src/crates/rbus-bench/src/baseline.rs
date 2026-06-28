@@ -4,15 +4,40 @@ use std::path::Path;
 use rbus_core::warning::{Warning, WarningCode};
 
 use crate::metrics::BenchmarkResult;
+use crate::report::CSV_HEADER;
 
 const COMPONENT_RBUS_BENCH: &str = "rbus-bench";
-const BASELINE_FIELD_COUNT: usize = 9;
-const FIRST_DATA_LINE: usize = 2;
+const ALL_PAYLOAD_SIZES: usize = 0;
+const BACKPRESSURE_PINNED_SLOT_FIELD: usize = 27;
+const BASELINE_FIELD_COUNT: usize = 30;
+const LATENCY_P50_FIELD: usize = 8;
+const LATENCY_P90_FIELD: usize = 9;
+const LATENCY_P99_FIELD: usize = 10;
+const LATENCY_P999_FIELD: usize = 11;
+const LATENCY_P9999_FIELD: usize = 12;
 const LATENCY_GATE_NUMERATOR: u64 = 105;
 const LATENCY_GATE_DENOMINATOR: u64 = 100;
+const MEASURED_MESSAGES_FIELD: usize = 7;
+const PAYLOAD_SIZE_FIELD: usize = 4;
+const PAYLOAD_THROUGHPUT_FIELD: usize = 18;
+const PUBLISHER_COUNT_FIELD: usize = 5;
+const ROUND_TRIP_P50_FIELD: usize = 13;
+const ROUND_TRIP_P90_FIELD: usize = 14;
+const ROUND_TRIP_P99_FIELD: usize = 15;
+const ROUND_TRIP_P999_FIELD: usize = 16;
+const SCENARIO_FIELD: usize = 1;
+const SKIPPED_MESSAGES_FIELD: usize = 26;
+const STATUS_FIELD: usize = 0;
+const STATUS_OK: &str = "ok";
+const SUBSCRIBER_COUNT_FIELD: usize = 6;
+const SYSCALLS_FIELD: usize = 23;
 const THROUGHPUT_GATE_FACTOR: f64 = 0.95;
-const WILDCARD: &str = "*";
-const WILDCARD_PAYLOAD_SIZE: usize = 0;
+const THROUGHPUT_FIELD: usize = 17;
+const TRANSPORT_FIELD: usize = 2;
+const WAIT_MODE_FIELD: usize = 3;
+const WARNING_COUNT_FIELD: usize = 25;
+const ALLOCATIONS_FIELD: usize = 24;
+const WILDCARD_KEY: &str = "*";
 
 /// Benchmark metadata
 pub fn enforce_regression_gates(
@@ -26,21 +51,63 @@ pub fn enforce_regression_gates(
             .find(|entry| entry.matches(result))
             .ok_or_else(|| gate_warning("enforce_regression_gates::missing"))?;
         enforce_latency_gate(result.latency_p50_ns, baseline.latency_p50_ns, "p50")?;
+        enforce_latency_gate(result.latency_p90_ns, baseline.latency_p90_ns, "p90")?;
         enforce_latency_gate(result.latency_p99_ns, baseline.latency_p99_ns, "p99")?;
-        if result.throughput_messages_per_second
-            < baseline.throughput_messages_per_second * THROUGHPUT_GATE_FACTOR
-        {
-            return Err(gate_warning("enforce_regression_gates::throughput"));
-        }
-        if result.allocations_per_message > baseline.allocations_per_message {
-            return Err(gate_warning("enforce_regression_gates::allocations"));
-        }
-        if result.syscalls_per_message > baseline.syscalls_per_message {
-            return Err(gate_warning("enforce_regression_gates::syscalls"));
-        }
-        if result.warning_count > baseline.warning_count {
-            return Err(gate_warning("enforce_regression_gates::warnings"));
-        }
+        enforce_latency_gate(result.latency_p999_ns, baseline.latency_p999_ns, "p999")?;
+        enforce_latency_gate(result.latency_p9999_ns, baseline.latency_p9999_ns, "p9999")?;
+        enforce_latency_gate(
+            result.round_trip_p50_ns,
+            baseline.round_trip_p50_ns,
+            "rt_p50",
+        )?;
+        enforce_latency_gate(
+            result.round_trip_p90_ns,
+            baseline.round_trip_p90_ns,
+            "rt_p90",
+        )?;
+        enforce_latency_gate(
+            result.round_trip_p99_ns,
+            baseline.round_trip_p99_ns,
+            "rt_p99",
+        )?;
+        enforce_latency_gate(
+            result.round_trip_p999_ns,
+            baseline.round_trip_p999_ns,
+            "rt_p999",
+        )?;
+        enforce_throughput_gate(
+            result.throughput_messages_per_second,
+            baseline.throughput_messages_per_second,
+        )?;
+        enforce_payload_throughput_gate(
+            result.payload_throughput_gib_per_second,
+            baseline.payload_throughput_gib_per_second,
+        )?;
+        enforce_float_ceiling(
+            result.allocations_per_message,
+            baseline.allocations_per_message,
+            "enforce_regression_gates::allocations",
+        )?;
+        enforce_float_ceiling(
+            result.syscalls_per_message,
+            baseline.syscalls_per_message,
+            "enforce_regression_gates::syscalls",
+        )?;
+        enforce_counter_ceiling(
+            result.warning_count,
+            baseline.warning_count,
+            "enforce_regression_gates::warnings",
+        )?;
+        enforce_counter_ceiling(
+            result.skipped_messages,
+            baseline.skipped_messages,
+            "enforce_regression_gates::skipped_messages",
+        )?;
+        enforce_counter_ceiling(
+            result.backpressure_pinned_slot,
+            baseline.backpressure_pinned_slot,
+            "enforce_regression_gates::backpressure",
+        )?;
     }
     Ok(())
 }
@@ -48,12 +115,23 @@ pub fn enforce_regression_gates(
 fn read_baseline_entries(path: &Path) -> Result<Vec<BaselineEntry>, Warning> {
     let contents = fs::read_to_string(path)
         .map_err(|error| warning_from_io(error, "read_baseline_entries::read"))?;
+    let mut lines = contents.lines();
+    let header = lines
+        .next()
+        .ok_or_else(|| gate_warning("read_baseline_entries::header"))?;
+    if header != CSV_HEADER {
+        return Err(gate_warning("read_baseline_entries::header"));
+    }
     let mut entries = Vec::new();
-    for (line_index, line) in contents.lines().enumerate().skip(1) {
+    for line in lines {
         if line.trim().is_empty() {
             continue;
         }
-        entries.push(parse_baseline_entry(line, line_index + FIRST_DATA_LINE)?);
+        let entry = parse_baseline_entry(line)?;
+        if entries.iter().any(|existing| entry.has_same_key(existing)) {
+            return Err(gate_warning("read_baseline_entries::duplicate"));
+        }
+        entries.push(entry);
     }
     if entries.is_empty() {
         return Err(gate_warning("read_baseline_entries::empty"));
@@ -61,23 +139,58 @@ fn read_baseline_entries(path: &Path) -> Result<Vec<BaselineEntry>, Warning> {
     Ok(entries)
 }
 
-fn parse_baseline_entry(line: &str, _line_number: usize) -> Result<BaselineEntry, Warning> {
+fn parse_baseline_entry(line: &str) -> Result<BaselineEntry, Warning> {
     let fields: Vec<&str> = line.split(',').collect();
     if fields.len() != BASELINE_FIELD_COUNT {
         return Err(gate_warning("parse_baseline_entry::field_count"));
     }
+    if fields[STATUS_FIELD] != STATUS_OK {
+        return Err(gate_warning("parse_baseline_entry::status"));
+    }
     Ok(BaselineEntry {
-        scenario: fields[0].to_owned(),
-        transport: fields[1].to_owned(),
-        wait_mode: fields[2].to_owned(),
-        payload_size: parse_field(fields[3], "payload_size")?,
-        latency_p50_ns: parse_field(fields[4], "latency_p50_ns")?,
-        latency_p99_ns: parse_field(fields[5], "latency_p99_ns")?,
-        throughput_messages_per_second: parse_field(fields[6], "throughput_messages_per_second")?,
-        allocations_per_message: parse_field(fields[7], "allocations_per_message")?,
-        syscalls_per_message: parse_field(fields[8], "syscalls_per_message")?,
-        warning_count: 0,
+        scenario: parse_key_field(fields[SCENARIO_FIELD], "scenario")?,
+        transport: parse_key_field(fields[TRANSPORT_FIELD], "transport")?,
+        wait_mode: parse_key_field(fields[WAIT_MODE_FIELD], "wait_mode")?,
+        payload_size: parse_field(fields[PAYLOAD_SIZE_FIELD], "payload_size")?,
+        publisher_count: parse_field(fields[PUBLISHER_COUNT_FIELD], "publisher_count")?,
+        subscriber_count: parse_field(fields[SUBSCRIBER_COUNT_FIELD], "subscriber_count")?,
+        measured_messages: parse_field(fields[MEASURED_MESSAGES_FIELD], "measured_messages")?,
+        latency_p50_ns: parse_field(fields[LATENCY_P50_FIELD], "latency_p50_ns")?,
+        latency_p90_ns: parse_field(fields[LATENCY_P90_FIELD], "latency_p90_ns")?,
+        latency_p99_ns: parse_field(fields[LATENCY_P99_FIELD], "latency_p99_ns")?,
+        latency_p999_ns: parse_field(fields[LATENCY_P999_FIELD], "latency_p999_ns")?,
+        latency_p9999_ns: parse_field(fields[LATENCY_P9999_FIELD], "latency_p9999_ns")?,
+        round_trip_p50_ns: parse_field(fields[ROUND_TRIP_P50_FIELD], "round_trip_p50_ns")?,
+        round_trip_p90_ns: parse_field(fields[ROUND_TRIP_P90_FIELD], "round_trip_p90_ns")?,
+        round_trip_p99_ns: parse_field(fields[ROUND_TRIP_P99_FIELD], "round_trip_p99_ns")?,
+        round_trip_p999_ns: parse_field(fields[ROUND_TRIP_P999_FIELD], "round_trip_p999_ns")?,
+        throughput_messages_per_second: parse_finite_field(
+            fields[THROUGHPUT_FIELD],
+            "throughput_messages_per_second",
+        )?,
+        payload_throughput_gib_per_second: parse_finite_field(
+            fields[PAYLOAD_THROUGHPUT_FIELD],
+            "payload_throughput_gib_per_second",
+        )?,
+        allocations_per_message: parse_finite_field(
+            fields[ALLOCATIONS_FIELD],
+            "allocations_per_message",
+        )?,
+        syscalls_per_message: parse_finite_field(fields[SYSCALLS_FIELD], "syscalls_per_message")?,
+        warning_count: parse_field(fields[WARNING_COUNT_FIELD], "warning_count")?,
+        skipped_messages: parse_field(fields[SKIPPED_MESSAGES_FIELD], "skipped_messages")?,
+        backpressure_pinned_slot: parse_field(
+            fields[BACKPRESSURE_PINNED_SLOT_FIELD],
+            "backpressure_pinned_slot",
+        )?,
     })
+}
+
+fn parse_key_field(value: &str, _field_name: &'static str) -> Result<String, Warning> {
+    if value.is_empty() || value == WILDCARD_KEY {
+        return Err(gate_warning("parse_baseline_entry::key"));
+    }
+    Ok(value.to_owned())
 }
 
 fn parse_field<T>(value: &str, _field_name: &'static str) -> Result<T, Warning>
@@ -89,10 +202,54 @@ where
         .map_err(|_| gate_warning("parse_baseline_entry::parse"))
 }
 
+fn parse_finite_field(value: &str, field_name: &'static str) -> Result<f64, Warning> {
+    let parsed = parse_field::<f64>(value, field_name)?;
+    if !parsed.is_finite() || parsed.is_sign_negative() {
+        return Err(gate_warning("parse_baseline_entry::finite"));
+    }
+    Ok(parsed)
+}
+
 fn enforce_latency_gate(actual: u64, baseline: u64, _metric: &'static str) -> Result<(), Warning> {
     let threshold = baseline.saturating_mul(LATENCY_GATE_NUMERATOR) / LATENCY_GATE_DENOMINATOR;
     if actual > threshold {
         return Err(gate_warning("enforce_regression_gates::latency"));
+    }
+    Ok(())
+}
+
+fn enforce_throughput_gate(actual: f64, baseline: f64) -> Result<(), Warning> {
+    if actual < baseline * THROUGHPUT_GATE_FACTOR {
+        return Err(gate_warning("enforce_regression_gates::throughput"));
+    }
+    Ok(())
+}
+
+fn enforce_payload_throughput_gate(actual: f64, baseline: f64) -> Result<(), Warning> {
+    if baseline != 0.0 && actual < baseline * THROUGHPUT_GATE_FACTOR {
+        return Err(gate_warning("enforce_regression_gates::payload_throughput"));
+    }
+    Ok(())
+}
+
+fn enforce_float_ceiling(
+    actual: f64,
+    baseline: f64,
+    operation: &'static str,
+) -> Result<(), Warning> {
+    if actual > baseline {
+        return Err(gate_warning(operation));
+    }
+    Ok(())
+}
+
+fn enforce_counter_ceiling(
+    actual: u64,
+    baseline: u64,
+    operation: &'static str,
+) -> Result<(), Warning> {
+    if actual > baseline {
+        return Err(gate_warning(operation));
     }
     Ok(())
 }
@@ -114,24 +271,201 @@ struct BaselineEntry {
     transport: String,
     wait_mode: String,
     payload_size: usize,
+    publisher_count: u8,
+    subscriber_count: u8,
+    measured_messages: u64,
     latency_p50_ns: u64,
+    latency_p90_ns: u64,
     latency_p99_ns: u64,
+    latency_p999_ns: u64,
+    latency_p9999_ns: u64,
+    round_trip_p50_ns: u64,
+    round_trip_p90_ns: u64,
+    round_trip_p99_ns: u64,
+    round_trip_p999_ns: u64,
     throughput_messages_per_second: f64,
+    payload_throughput_gib_per_second: f64,
     allocations_per_message: f64,
     syscalls_per_message: f64,
     warning_count: u64,
+    skipped_messages: u64,
+    backpressure_pinned_slot: u64,
 }
 
 impl BaselineEntry {
     fn matches(&self, result: &BenchmarkResult) -> bool {
-        string_matches(&self.scenario, result.scenario)
-            && string_matches(&self.transport, result.transport.as_str())
-            && string_matches(&self.wait_mode, result.wait_mode.as_str())
-            && (self.payload_size == WILDCARD_PAYLOAD_SIZE
-                || self.payload_size == result.payload_size)
+        self.scenario == result.scenario
+            && self.transport == result.transport.as_str()
+            && self.wait_mode == result.wait_mode.as_str()
+            && (self.payload_size == ALL_PAYLOAD_SIZES || self.payload_size == result.payload_size)
+            && self.publisher_count == result.publisher_count
+            && self.subscriber_count == result.subscriber_count
+            && self.measured_messages == result.measured_messages
+    }
+
+    fn has_same_key(&self, other: &Self) -> bool {
+        self.scenario == other.scenario
+            && self.transport == other.transport
+            && self.wait_mode == other.wait_mode
+            && self.payload_size == other.payload_size
+            && self.publisher_count == other.publisher_count
+            && self.subscriber_count == other.subscriber_count
+            && self.measured_messages == other.measured_messages
     }
 }
 
-fn string_matches(pattern: &str, value: &str) -> bool {
-    pattern == WILDCARD || pattern == value
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+
+    use crate::transport_kind::TransportKind;
+    use crate::wait_mode::WaitMode;
+
+    use super::*;
+
+    const BASELINE_NAME_PREFIX: &str = "rbus-baseline-test";
+    const TEST_SCENARIO: &str = "one-publisher-one-subscriber";
+    const TEST_PAYLOAD_SIZE: usize = 64;
+    const TEST_THROUGHPUT: f64 = 1_000.0;
+
+    #[test]
+    fn full_baseline_entry_allows_matching_result() {
+        let path = write_baseline(
+            "full",
+            &baseline_line(TEST_SCENARIO, "rbus-loaned", TEST_PAYLOAD_SIZE, 100, 0),
+        );
+        let result = benchmark_result(100);
+        enforce_regression_gates(&path, &[result]).expect("baseline should pass");
+        remove_baseline(path);
+    }
+
+    #[test]
+    fn all_payload_baseline_entry_allows_matching_result() {
+        let path = write_baseline(
+            "all-payload",
+            &baseline_line(TEST_SCENARIO, "rbus-loaned", ALL_PAYLOAD_SIZES, 100, 0),
+        );
+        let result = benchmark_result(100);
+        enforce_regression_gates(&path, &[result]).expect("baseline should pass");
+        remove_baseline(path);
+    }
+
+    #[test]
+    fn baseline_gate_rejects_missing_key() {
+        let path = write_baseline(
+            "missing",
+            &baseline_line(TEST_SCENARIO, "unix-socket", TEST_PAYLOAD_SIZE, 100, 0),
+        );
+        let result = benchmark_result(100);
+        assert!(enforce_regression_gates(&path, &[result]).is_err());
+        remove_baseline(path);
+    }
+
+    #[test]
+    fn baseline_gate_rejects_wildcard_key() {
+        let path = write_baseline(
+            "wildcard",
+            &baseline_line(WILDCARD_KEY, "rbus-loaned", TEST_PAYLOAD_SIZE, 100, 0),
+        );
+        let result = benchmark_result(100);
+        assert!(enforce_regression_gates(&path, &[result]).is_err());
+        remove_baseline(path);
+    }
+
+    #[test]
+    fn baseline_gate_rejects_latency_regression() {
+        let path = write_baseline(
+            "latency",
+            &baseline_line(TEST_SCENARIO, "rbus-loaned", TEST_PAYLOAD_SIZE, 10, 0),
+        );
+        let result = benchmark_result(100);
+        assert!(enforce_regression_gates(&path, &[result]).is_err());
+        remove_baseline(path);
+    }
+
+    #[test]
+    fn baseline_gate_rejects_warning_regression() {
+        let path = write_baseline(
+            "warning",
+            &baseline_line(TEST_SCENARIO, "rbus-loaned", TEST_PAYLOAD_SIZE, 100, 0),
+        );
+        let mut result = benchmark_result(100);
+        result.warning_count = 1;
+        assert!(enforce_regression_gates(&path, &[result]).is_err());
+        remove_baseline(path);
+    }
+
+    fn benchmark_result(latency_ns: u64) -> BenchmarkResult {
+        BenchmarkResult {
+            scenario: TEST_SCENARIO,
+            transport: TransportKind::RbusLoaned,
+            wait_mode: WaitMode::BusyPoll,
+            payload_size: TEST_PAYLOAD_SIZE,
+            publisher_count: 1,
+            subscriber_count: 1,
+            measured_messages: 1,
+            latency_p50_ns: latency_ns,
+            latency_p90_ns: latency_ns,
+            latency_p99_ns: latency_ns,
+            latency_p999_ns: latency_ns,
+            latency_p9999_ns: latency_ns,
+            round_trip_p50_ns: 0,
+            round_trip_p90_ns: 0,
+            round_trip_p99_ns: 0,
+            round_trip_p999_ns: 0,
+            throughput_messages_per_second: TEST_THROUGHPUT,
+            payload_throughput_gib_per_second: 0.0,
+            cpu_utilization_per_mille: 0,
+            rss_bytes: 0,
+            pss_bytes: 0,
+            context_switches: 0,
+            syscalls_per_message: 0.0,
+            allocations_per_message: 0.0,
+            warning_count: 0,
+            skipped_messages: 0,
+            backpressure_pinned_slot: 0,
+            startup_latency_ns: 0,
+            attach_latency_ns: 0,
+        }
+    }
+
+    fn baseline_line(
+        scenario: &str,
+        transport: &str,
+        payload_size: usize,
+        latency_ns: u64,
+        warning_count: u64,
+    ) -> String {
+        format!(
+            concat!(
+                "ok,{},{},busy-poll,{},1,1,1,",
+                "{},{},{},{},{},",
+                "0,0,0,0,{:.6},0.000000000,0,0,0,0,",
+                "0.000000,0.000000,{},0,0,0,0"
+            ),
+            scenario,
+            transport,
+            payload_size,
+            latency_ns,
+            latency_ns,
+            latency_ns,
+            latency_ns,
+            latency_ns,
+            TEST_THROUGHPUT,
+            warning_count
+        )
+    }
+
+    fn write_baseline(name: &str, line: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "{BASELINE_NAME_PREFIX}-{}-{name}.csv",
+            std::process::id()
+        ));
+        std::fs::write(&path, format!("{CSV_HEADER}\n{line}\n")).expect("baseline should write");
+        path
+    }
+
+    fn remove_baseline(path: PathBuf) {
+        std::fs::remove_file(path).expect("baseline should remove");
+    }
 }

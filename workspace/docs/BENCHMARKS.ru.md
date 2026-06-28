@@ -76,8 +76,33 @@ cargo run -p rbus-bench -- --suite --matrix-smoke --messages 1 --format csv --no
 ```
 
 Baseline для regression gates находится в
-`benches/baselines/rbus_suite_baseline.csv`. Gate проверяет p50/p99 latency,
-throughput, allocations/message, syscalls/message и warning count. Portable
-baseline в репозитории задаёт реальные верхние latency/syscall и нижние throughput
-пороги вместо smoke-заглушек; на reference host его можно заменить exact
-baseline-ами с тем же CSV-форматом после контрольного прогона.
+`benches/baselines/rbus_suite_baseline.csv`. Файл использует тот же CSV-формат,
+что и `rbus-bench --suite --format csv`, включая `publisher_count`,
+`subscriber_count` и `measured_messages`. Gate не принимает старый compact
+baseline и не принимает `*` для `scenario`, `transport` или `wait_mode`.
+
+Portable baseline в репозитории содержит строки для всей заявленной matrix:
+каждая строка фиксирует конкретные `scenario`/`transport`/`wait_mode`/topology
+и `measured_messages`; `payload_size=0` означает единый portable threshold для
+всех payload sizes этой строки. Reference baseline, снятый на целевой машине,
+может заменить этот файл exact строками с конкретным `payload_size`.
+
+Regression gate проверяет p50/p90/p99/p99.9/p99.99 latency, p50/p90/p99/p99.9
+round-trip latency, throughput, payload throughput для exact payload rows,
+allocations/message, syscalls/message, warning count, skipped messages и
+pinned-slot backpressure. Любое превышение warning counters считается ошибкой
+suite.
+
+TypeScript-сценарии benchmark automation запускаются через контейнер:
+
+```bash
+npm run bench:reference -- --messages 4 --output benches/baselines/rbus_suite_baseline.csv
+npm run bench:perf -- --messages 4 --baseline benches/baselines/rbus_suite_baseline.csv
+npm run bench:strace
+```
+
+`bench:reference` запускает suite с `--no-gate` и записывает CSV baseline.
+`bench:perf` запускает suite с regression gate. `bench:strace` запускает
+hot-path syscall regression и короткий suite `strace -c` pass для baseline
+transport-ов. Для быстрой локальной проверки reference/perf можно добавить
+`--matrix-smoke`, но такой CSV предназначен только для smoke-профиля.
