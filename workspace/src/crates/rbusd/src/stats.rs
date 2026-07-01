@@ -6,7 +6,7 @@ use crate::registry::DaemonRegistry;
 
 const COMPONENT_RBUSD: &str = "rbusd";
 
-/// Daemon runtime metadata
+/// Aggregates stream counters across the daemon registry
 pub fn daemon_stats_snapshot(registry: &DaemonRegistry) -> Result<Stats, Warning> {
     let mut stats = Stats::default();
     for topic_entry in registry.topics.values() {
@@ -24,7 +24,7 @@ pub fn daemon_stats_snapshot(registry: &DaemonRegistry) -> Result<Stats, Warning
     Ok(stats)
 }
 
-/// Control response metadata
+/// Formats a stats response as text or JSON
 pub fn format_stats_response(domain: &str, stats: &Stats, json: bool) -> String {
     if json {
         format!(

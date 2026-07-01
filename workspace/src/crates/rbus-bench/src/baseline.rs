@@ -45,10 +45,10 @@ const WARNING_COUNT_FIELD: usize = 54;
 const ALLOCATIONS_FIELD: usize = 53;
 const WILDCARD_KEY: &str = "*";
 
-/// Benchmark baseline path.
+/// Benchmark baseline path
 pub const DEFAULT_BASELINE_PATH: &str = "benches/baselines/rbus_suite_baseline_x86_64.csv";
 
-/// Benchmark metadata
+/// Checks benchmark results against the configured baseline CSV
 pub fn enforce_regression_gates(
     baseline_path: &Path,
     results: &[BenchmarkResult],

@@ -1,4 +1,4 @@
-//! Daemon runtime metadata
+//! Helpers for sending CLI requests to the daemon
 
 use std::process::ExitCode;
 

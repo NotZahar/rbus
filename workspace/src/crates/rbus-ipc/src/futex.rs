@@ -1,4 +1,4 @@
-//! Internal documentation
+//! Futex wait/wake wrappers for process-local and shared-memory wait words
 
 use core::sync::atomic::AtomicU32;
 use core::time::Duration;
@@ -11,28 +11,23 @@ use crate::errno::warning_from_errno;
 const COMPONENT_IPC: &str = "rbus-ipc";
 const NANOSECONDS_PER_SECOND: u64 = 1_000_000_000;
 
-/// Linux IPC metadata
+/// Result of a shared futex wait
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FutexWaitStatus {
-    /// Internal documentation
+    /// The futex was woken by a matching wake call
     Woken,
-    /// Internal documentation
+    /// The futex value no longer matched the expected value
     ValueChanged,
-    /// Internal documentation
+    /// The optional relative timeout expired
     TimedOut,
 }
 
-/// Linux IPC metadata
+/// Waits on a process-private futex word until it changes or is woken
 pub fn futex_wait_private(futex_word: &AtomicU32, expected: u32) -> RbusResult<()> {
     let futex_pointer = atomic_u32_as_futex_pointer(futex_word);
 
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - futex_wait_private_returns_warning_when_value_mismatches
-    // - futex_wake_private_returns_zero_without_waiters
+    // SAFETY: `futex_pointer` points at the same aligned 32-bit atomic for the duration of the
+    // syscall, and the timeout pointer is null for an unbounded wait
     let result = unsafe {
         libc::syscall(
             libc::SYS_futex,
@@ -52,7 +47,7 @@ pub fn futex_wait_private(futex_word: &AtomicU32, expected: u32) -> RbusResult<(
     Ok(())
 }
 
-/// Linux IPC metadata
+/// Wakes up to `wake_count` waiters on a process-private futex word
 pub fn futex_wake_private(futex_word: &AtomicU32, wake_count: u32) -> RbusResult<u32> {
     let wake_count = libc::c_int::try_from(wake_count).map_err(|_| {
         Warning::new(
@@ -63,12 +58,8 @@ pub fn futex_wake_private(futex_word: &AtomicU32, wake_count: u32) -> RbusResult
     })?;
     let futex_pointer = atomic_u32_as_futex_pointer(futex_word);
 
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - futex_wake_private_returns_zero_without_waiters
+    // SAFETY: `futex_pointer` points at the same aligned 32-bit atomic for the duration of the
+    // syscall, and `wake_count` was range-checked for libc
     let result = unsafe {
         libc::syscall(
             libc::SYS_futex,
@@ -93,7 +84,7 @@ pub fn futex_wake_private(futex_word: &AtomicU32, wake_count: u32) -> RbusResult
     })
 }
 
-/// Linux IPC metadata
+/// Waits on a shared futex word with an optional relative timeout
 pub fn futex_wait_shared(
     futex_word: &AtomicU32,
     expected: u32,
@@ -108,9 +99,8 @@ pub fn futex_wait_shared(
         .as_ref()
         .map_or(core::ptr::null(), core::ptr::from_ref);
 
-    // SAFETY: Required invariants are upheld
-    // Internal note
-    // Covered by the named test
+    // SAFETY: `futex_pointer` points at a shared aligned 32-bit atomic, and `timeout_pointer` is
+    // either null or points to a stack `timespec` kept alive until the syscall returns
     let result = unsafe {
         libc::syscall(
             libc::SYS_futex,
@@ -123,7 +113,7 @@ pub fn futex_wait_shared(
     futex_wait_status(result, "futex_wait_shared")
 }
 
-/// Linux IPC metadata
+/// Wakes up to `wake_count` waiters on a shared futex word
 pub fn futex_wake_shared(futex_word: &AtomicU32, wake_count: u32) -> RbusResult<u32> {
     let wake_count = libc::c_int::try_from(wake_count).map_err(|_| {
         Warning::new(
@@ -134,8 +124,8 @@ pub fn futex_wake_shared(futex_word: &AtomicU32, wake_count: u32) -> RbusResult<
     })?;
     let futex_pointer = atomic_u32_as_futex_pointer(futex_word);
 
-    // SAFETY: Required invariants are upheld
-    // Covered by the named test
+    // SAFETY: `futex_pointer` points at the same aligned 32-bit atomic for the duration of the
+    // syscall, and `wake_count` was range-checked for libc
     let result =
         unsafe { libc::syscall(libc::SYS_futex, futex_pointer, libc::FUTEX_WAKE, wake_count) };
     if result < 0 {

@@ -1,4 +1,4 @@
-//! Control protocol re-registration metadata
+//! Typed payloads for daemon restart re-registration commands
 
 use rbus_core::warning::{Warning, WarningCode};
 
@@ -26,7 +26,7 @@ impl ReregisterPublisherRequest {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES * 6;
 
-    /// Control request metadata
+    /// Encodes this request payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         let mut output = [0_u8; Self::ENCODED_SIZE];
         write_u64(&mut output, 0, self.topic_hash);
@@ -38,7 +38,7 @@ impl ReregisterPublisherRequest {
         output
     }
 
-    /// Control request metadata
+    /// Decodes this request payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(
             input,
@@ -61,7 +61,7 @@ impl ReregisterPublisherRequest {
 pub struct ReregisterPublisherResponse {
     /// Daemon registry generation assigned after restart
     pub stream_generation: u64,
-    /// Subscriber runtime metadata
+    /// Subscribers already registered for this topic after re-registration
     pub subscriber_count: u64,
 }
 
@@ -69,7 +69,7 @@ impl ReregisterPublisherResponse {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES * 2;
 
-    /// Control response metadata
+    /// Encodes this response payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         let mut output = [0_u8; Self::ENCODED_SIZE];
         write_u64(&mut output, 0, self.stream_generation);
@@ -77,7 +77,7 @@ impl ReregisterPublisherResponse {
         output
     }
 
-    /// Control response metadata
+    /// Decodes this response payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(
             input,
@@ -102,12 +102,12 @@ impl ReregisterSubscriberRequest {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES;
 
-    /// Control request metadata
+    /// Encodes this request payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         self.topic_hash.to_le_bytes()
     }
 
-    /// Control request metadata
+    /// Decodes this request payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(
             input,

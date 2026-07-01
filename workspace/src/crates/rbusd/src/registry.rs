@@ -22,7 +22,7 @@ const FIRST_PUBLISHER_ID: u64 = 1;
 const FIRST_STREAM_ID: u64 = 1;
 const UNREGISTER_REMOVED_ENTRY_COUNT: u64 = 1;
 
-/// Daemon runtime metadata
+/// In-memory registry of active topics, publishers and subscribers
 #[derive(Default)]
 pub struct DaemonRegistry {
     pub(crate) topics: BTreeMap<TopicHash, TopicEntry>,
@@ -35,7 +35,7 @@ pub struct DaemonRegistry {
 }
 
 impl DaemonRegistry {
-    /// Creates a value
+    /// Creates an empty registry with ids starting at one
     pub fn new() -> Self {
         Self {
             topics: BTreeMap::new(),
@@ -48,7 +48,7 @@ impl DaemonRegistry {
         }
     }
 
-    /// Publisher runtime metadata
+    /// Registers a publisher and creates its stream segment
     pub fn register_publisher(
         &mut self,
         request: RegisterPublisherRequest,
@@ -154,7 +154,7 @@ impl DaemonRegistry {
         })
     }
 
-    /// Daemon runtime metadata
+    /// Registers a subscriber and returns the topic wait descriptor
     pub fn register_subscriber(
         &mut self,
         topic_hash: TopicHash,
@@ -199,12 +199,12 @@ impl DaemonRegistry {
         })
     }
 
-    /// Stream runtime metadata
+    /// Returns all streams currently attached to a topic
     pub fn attach_streams(&self, topic_hash: TopicHash) -> AttachStreamsResult {
         self.collect_streams(topic_hash, 0)
     }
 
-    /// Stream runtime metadata
+    /// Returns streams created after `since_generation`
     pub fn notify_stream_added(
         &self,
         topic_hash: TopicHash,
@@ -239,7 +239,7 @@ impl DaemonRegistry {
         })
     }
 
-    /// Publisher runtime metadata
+    /// Removes a publisher and marks its stream closed
     pub fn unregister_publisher(
         &mut self,
         publisher_id: PublisherId,
@@ -283,7 +283,7 @@ impl DaemonRegistry {
         })
     }
 
-    /// Subscriber runtime metadata
+    /// Removes a subscriber and clears its reader pins
     pub fn unregister_subscriber(
         &mut self,
         subscriber_id: SubscriberId,
@@ -323,7 +323,7 @@ impl DaemonRegistry {
         })
     }
 
-    /// Internal documentation
+    /// Cleans all publishers and subscribers owned by a control session
     pub fn cleanup_session(&mut self, session_id: u64) -> Result<u64, Warning> {
         let publisher_ids: Vec<PublisherId> = self
             .publishers
@@ -458,7 +458,7 @@ impl DaemonRegistry {
         }
     }
 
-    /// Publisher runtime metadata
+    /// Returns the number of active publisher streams
     pub fn publisher_count(&self) -> u64 {
         self.topics
             .values()
@@ -466,7 +466,7 @@ impl DaemonRegistry {
             .sum()
     }
 
-    /// Subscriber runtime metadata
+    /// Returns the number of active subscribers
     pub fn subscriber_count(&self) -> u64 {
         self.topics
             .values()
@@ -474,17 +474,17 @@ impl DaemonRegistry {
             .sum()
     }
 
-    /// Topic runtime metadata
+    /// Returns the number of non-empty topics
     pub fn topic_count(&self) -> u64 {
         self.topics.len() as u64
     }
 
-    /// Stream runtime metadata
+    /// Returns the number of active streams
     pub fn stream_count(&self) -> u64 {
         self.publisher_count()
     }
 
-    /// Returns a value
+    /// Captures aggregate registry counters
     pub fn snapshot(&self) -> RegistrySnapshot {
         RegistrySnapshot {
             topic_count: self.topic_count(),

@@ -10,7 +10,7 @@ const BENCH_WAITER_MASK: u64 = 1;
 const BARRIER_PARTICIPANTS: usize = 2;
 const WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Topic runtime metadata
+/// Measures wake latency for the blocking topic wait path
 pub fn blocking_wait_wake_latency_ns() -> Result<u64, Warning> {
     let file_descriptor = create_topic_wait_segment(BENCH_TOPIC_HASH)?;
     let topic_wait = Arc::new(TopicWaitSegment::map(&file_descriptor)?);

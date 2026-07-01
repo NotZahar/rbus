@@ -1,42 +1,42 @@
-//! Internal documentation
+//! Atomic orderings used by the shared-memory ring protocol
 
 use core::sync::atomic::Ordering;
 
-/// Internal documentation
+/// Publishes slot metadata after the payload write is complete
 pub const WRITER_COMMIT_ORDERING: Ordering = Ordering::Release;
 
-/// Internal documentation
+/// Acquires a slot while observing existing reader pins
 pub const WRITER_CLAIM_ORDERING: Ordering = Ordering::AcqRel;
 
-/// Internal documentation
+/// Observes reader pins when a writer claim compare-exchange fails
 pub const WRITER_CLAIM_FAILURE_ORDERING: Ordering = Ordering::Acquire;
 
-/// Internal documentation
+/// Releases the writer claim after commit or rollback
 pub const WRITER_CLAIM_CLEAR_ORDERING: Ordering = Ordering::Release;
 
-/// Internal documentation
+/// Publishes the encoded slot state transition
 pub const WRITER_STATE_UPDATE_ORDERING: Ordering = Ordering::Release;
 
-/// Internal documentation
+/// Observes committed writer state before reading slot contents
 pub const READER_OBSERVE_ORDERING: Ordering = Ordering::Acquire;
 
-/// Internal documentation
+/// Observes slot metadata after the committed state is visible
 pub const READER_SLOT_OBSERVE_ORDERING: Ordering = Ordering::Acquire;
 
-/// Internal documentation
+/// Pins a slot while preserving writer claim ordering
 pub const READER_PIN_ORDERING: Ordering = Ordering::AcqRel;
 
-/// Internal documentation
+/// Observes writer claim state when reader pinning fails
 pub const READER_PIN_FAILURE_ORDERING: Ordering = Ordering::Acquire;
 
-/// Payload metadata
+/// Ordering for diagnostic counters that do not synchronize data visibility
 pub const COUNTER_ORDERING: Ordering = Ordering::Relaxed;
 
-/// Internal documentation
+/// Updates reader masks on release paths
 pub const READER_MASK_UPDATE_ORDERING: Ordering = Ordering::AcqRel;
 
-/// Daemon runtime metadata
+/// Updates stream lifecycle flags shared with the daemon
 pub const SEGMENT_FLAG_UPDATE_ORDERING: Ordering = Ordering::AcqRel;
 
-/// Internal documentation
+/// Observes stream lifecycle flags shared with the daemon
 pub const SEGMENT_FLAG_OBSERVE_ORDERING: Ordering = Ordering::Acquire;

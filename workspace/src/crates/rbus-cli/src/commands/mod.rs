@@ -11,7 +11,7 @@ use std::process::ExitCode;
 use crate::args::{CliArguments, CliCommand};
 use crate::output::{print_command_help, print_help};
 
-/// CLI metadata
+/// Dispatches parsed CLI arguments to a command handler
 pub fn run(arguments: CliArguments) -> ExitCode {
     match arguments.command {
         CliCommand::List => list::run(&arguments),

@@ -38,7 +38,7 @@ pub struct SmokeReport {
 }
 
 impl SmokeReport {
-    /// Creates a value
+    /// Creates a smoke report from run status and context
     pub const fn new(
         status: &'static str,
         warning_count: u64,
@@ -59,7 +59,7 @@ impl SmokeReport {
         }
     }
 
-    /// Returns a value
+    /// Serializes the smoke report as JSON
     pub fn to_json(self) -> String {
         format!(
             concat!(
@@ -84,30 +84,30 @@ impl SmokeReport {
     }
 }
 
-/// Internal documentation
+/// Inputs used to build a smoke report
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SmokeReportContext {
-    /// Internal documentation
+    /// Number of benchmark scenarios included
     pub scenario_count: usize,
-    /// Benchmark metadata
+    /// Number of transports included
     pub transport_count: usize,
-    /// Payload metadata
+    /// Number of payload sizes included
     pub payload_size_count: usize,
-    /// Benchmark metadata
+    /// Process id that generated the report
     pub process_id: u32,
-    /// Internal documentation
+    /// Whether CPU pinning was enabled
     pub pinning_enabled: bool,
-    /// Publisher runtime metadata
+    /// Number of publishers used
     pub publisher_count: u8,
-    /// Subscriber runtime metadata
+    /// Number of subscribers used
     pub subscriber_count: u8,
-    /// Internal documentation
+    /// Smoke throughput sample
     pub messages_per_second: u64,
-    /// Topic runtime metadata
+    /// Blocking wait wake latency sample
     pub blocking_wait_wake_latency_ns: u64,
 }
 
-/// Benchmark metadata
+/// Full suite report with aggregate counts and row results
 #[derive(Clone, Debug, PartialEq)]
 pub struct SuiteReport {
     status: &'static str,
@@ -120,7 +120,7 @@ pub struct SuiteReport {
 }
 
 impl SuiteReport {
-    /// Benchmark metadata
+    /// Creates a suite report from aggregate counts and row results
     pub fn new(
         status: &'static str,
         gate_status: &'static str,
@@ -141,7 +141,7 @@ impl SuiteReport {
         }
     }
 
-    /// Returns a value
+    /// Serializes the suite report as JSON
     pub fn to_json(&self) -> String {
         let mut output = String::new();
         output.push_str(&format!(
@@ -169,7 +169,7 @@ impl SuiteReport {
         output
     }
 
-    /// Returns a value
+    /// Serializes the suite report as CSV
     pub fn to_csv(&self) -> String {
         let mut output = String::new();
         output.push_str(CSV_HEADER);

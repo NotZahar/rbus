@@ -8,7 +8,7 @@ use crate::fd::OwnedFileDescriptor;
 
 const COMPONENT_IPC: &str = "rbus-ipc";
 
-/// Linux IPC metadata
+/// Creates a sealed-capable anonymous memfd and resizes it to `size` bytes
 pub fn create_memfd(name: &str, size: usize) -> Result<OwnedFileDescriptor, Warning> {
     let c_name = CString::new(name).map_err(|_| {
         Warning::new(
@@ -18,12 +18,8 @@ pub fn create_memfd(name: &str, size: usize) -> Result<OwnedFileDescriptor, Warn
         )
     })?;
 
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - memfd_create_returns_valid_descriptor
+    // SAFETY: `c_name` is a live NUL-terminated string and the flags are constant values accepted
+    // by `memfd_create`; the returned descriptor is immediately wrapped for ownership
     let raw_file_descriptor = unsafe {
         libc::syscall(
             libc::SYS_memfd_create,
@@ -37,7 +33,7 @@ pub fn create_memfd(name: &str, size: usize) -> Result<OwnedFileDescriptor, Warn
     Ok(file_descriptor)
 }
 
-/// Linux IPC metadata
+/// Resizes a file descriptor with `ftruncate`
 pub fn resize_file_descriptor(
     file_descriptor: &OwnedFileDescriptor,
     size: usize,
@@ -50,12 +46,7 @@ pub fn resize_file_descriptor(
         )
     })?;
 
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - memfd_create_returns_valid_descriptor
+    // SAFETY: `file_descriptor` owns a live descriptor and `size_as_off_t` was range-checked
     let result =
         unsafe { libc::ftruncate(file_descriptor.as_raw_file_descriptor(), size_as_off_t) };
     if result != 0 {
@@ -68,14 +59,10 @@ pub fn resize_file_descriptor(
     Ok(())
 }
 
-/// Internal documentation
+/// Prevents future grow/shrink operations on a memfd
 pub fn seal_file_descriptor_size(file_descriptor: &OwnedFileDescriptor) -> Result<(), Warning> {
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - memfd_create_returns_valid_descriptor
+    // SAFETY: `file_descriptor` owns a live descriptor and `F_ADD_SEALS` is called with size seals
+    // supported by memfd file descriptors created with `MFD_ALLOW_SEALING`
     let result = unsafe {
         libc::fcntl(
             file_descriptor.as_raw_file_descriptor(),

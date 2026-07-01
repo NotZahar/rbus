@@ -1,4 +1,4 @@
-//! Control protocol metadata
+//! Synchronous client for daemon control protocol requests
 
 use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::UnixStream;
@@ -16,25 +16,25 @@ use super::io::{
 };
 use super::opcode::Opcode;
 
-/// Daemon runtime metadata
+/// Connected control-plane client
 pub struct ControlClient {
     stream: UnixStream,
 }
 
 impl ControlClient {
-    /// Daemon runtime metadata
+    /// Connects to the daemon socket
     pub fn connect(socket_path: &Path) -> Result<Self, Warning> {
         Ok(Self {
             stream: connect_unix_stream(socket_path)?,
         })
     }
 
-    /// Linux IPC metadata
+    /// Returns the underlying Unix stream descriptor
     pub fn as_raw_file_descriptor(&self) -> RawFd {
         self.stream.as_raw_fd()
     }
 
-    /// Control protocol metadata
+    /// Sends a request and reads a frame response
     pub fn request_frame(
         &mut self,
         opcode: Opcode,
@@ -52,7 +52,7 @@ impl ControlClient {
         read_control_frame(&mut self.stream, max_response_payload_length)
     }
 
-    /// Control protocol metadata
+    /// Sends a request and reads a response that may include file descriptors
     pub fn request_frame_with_file_descriptors(
         &mut self,
         opcode: Opcode,
@@ -78,7 +78,7 @@ impl ControlClient {
         )
     }
 
-    /// Control protocol metadata
+    /// Sends a request with file descriptors and reads a descriptor-capable response
     pub fn request_frame_with_sent_file_descriptors(
         &mut self,
         opcode: Opcode,
@@ -106,12 +106,12 @@ impl ControlClient {
     }
 }
 
-/// Control request metadata
+/// Returns the standard HELLO request header
 pub const fn hello_request_header() -> FrameHeader {
     hello_frame_header()
 }
 
-/// Daemon runtime metadata
+/// Sends a one-shot control request to a daemon socket
 pub fn request_control_frame(
     socket_path: &Path,
     opcode: Opcode,
@@ -127,7 +127,7 @@ pub fn request_control_frame(
     )
 }
 
-/// Control protocol metadata
+/// Sends a one-shot control request that may receive file descriptors
 pub fn request_control_frame_with_file_descriptors(
     socket_path: &Path,
     opcode: Opcode,

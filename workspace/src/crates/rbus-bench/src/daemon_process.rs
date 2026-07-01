@@ -14,14 +14,14 @@ const NO_CONTROL_FLAGS: u16 = 0;
 const NO_RESPONSE_PAYLOAD_BYTES: usize = 0;
 const RBUSD_BINARY_NAME: &str = "rbusd";
 
-/// Daemon runtime metadata
+/// Child daemon process used by benchmark runs
 pub struct DaemonProcess {
     child: Child,
     domain: String,
 }
 
 impl DaemonProcess {
-    /// Daemon runtime metadata
+    /// Starts a daemon for a benchmark domain and waits until it accepts requests
     pub fn start(domain: &str) -> Result<Self, Warning> {
         let child = Command::new(rbusd_binary_path()?)
             .args(["--domain", domain])

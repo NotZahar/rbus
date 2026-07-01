@@ -14,7 +14,7 @@ pub struct OwnedFileDescriptor {
 }
 
 impl OwnedFileDescriptor {
-    /// Linux IPC metadata
+    /// Takes ownership of a non-negative raw file descriptor
     pub fn new(raw_file_descriptor: RawFd) -> Result<Self, Warning> {
         if raw_file_descriptor < 0 {
             return Err(warning_from_errno(
@@ -28,12 +28,12 @@ impl OwnedFileDescriptor {
         })
     }
 
-    /// Linux IPC metadata
+    /// Returns the raw descriptor without transferring ownership
     pub const fn as_raw_file_descriptor(&self) -> RawFd {
         self.raw_file_descriptor
     }
 
-    /// Linux IPC metadata
+    /// Transfers ownership of the raw descriptor to the caller
     pub fn into_raw_file_descriptor(mut self) -> RawFd {
         let raw_file_descriptor = self.raw_file_descriptor;
         self.raw_file_descriptor = -1;
@@ -44,12 +44,8 @@ impl OwnedFileDescriptor {
 impl Drop for OwnedFileDescriptor {
     fn drop(&mut self) {
         if self.raw_file_descriptor >= 0 {
-            // SAFETY: Required invariants are upheld
-            // Invariants:
-            // - Required invariant holds
-            // - Required invariant holds
-            // Covered by tests:
-            // - memfd_create_returns_valid_descriptor
+            // SAFETY: The descriptor is owned by this wrapper and is closed at most once because
+            // it is set to -1 immediately after the syscall
             unsafe {
                 libc::close(self.raw_file_descriptor);
             }

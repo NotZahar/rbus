@@ -6,7 +6,7 @@ use super::opcode::Opcode;
 
 const COMPONENT_IPC: &str = "rbus-ipc";
 
-/// Control protocol metadata
+/// Encodes a frame header into little-endian wire format
 pub fn encode_frame_header(
     frame_header: FrameHeader,
     output_buffer: &mut [u8],
@@ -24,7 +24,7 @@ pub fn encode_frame_header(
     Ok(())
 }
 
-/// Control protocol metadata
+/// Decodes a frame header from little-endian wire format
 pub fn decode_frame_header(input_buffer: &[u8]) -> Result<FrameHeader, Warning> {
     if input_buffer.len() < FrameHeader::ENCODED_SIZE {
         return Err(Warning::new(

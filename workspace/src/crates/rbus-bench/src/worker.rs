@@ -34,7 +34,7 @@ pub const INTER_RECEIVE_GAP_PREFIX: &str = "RBUS_BENCH_INTER_RECEIVE_GAP_NS ";
 pub const BACKLOG_PREFIX: &str = "RBUS_BENCH_BACKLOG_MESSAGES ";
 pub const RESULT_PREFIX: &str = "RBUS_BENCH_WORKER_RESULT ";
 
-/// Benchmark metadata
+/// Runs one benchmark worker process
 pub fn run_worker(arguments: WorkerArguments) -> Result<(), Warning> {
     validate_worker_arguments(&arguments)?;
     if let Some(report) = crate::transports::baseline_ipc::run_worker(&arguments)? {

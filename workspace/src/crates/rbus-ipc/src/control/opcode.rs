@@ -3,7 +3,7 @@ use rbus_core::warning::{Warning, WarningCode};
 
 const COMPONENT_IPC: &str = "rbus-ipc";
 
-/// Control protocol metadata
+/// Numeric opcode stored in each control frame header
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u16)]
 pub enum Opcode {

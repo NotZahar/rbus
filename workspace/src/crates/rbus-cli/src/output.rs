@@ -1,12 +1,12 @@
 use crate::args::HelpCommand;
 
-/// CLI metadata
+/// Prints global CLI help
 pub fn print_help() {
     println!("rbus-cli <command> [--domain <domain>] [--json]");
     println!("commands: list, stats, warnings, inspect, cleanup, doctor, bench-smoke");
 }
 
-/// CLI metadata
+/// Prints help for a specific command
 pub fn print_command_help(command: HelpCommand) {
     match command {
         HelpCommand::List => print_command_usage(

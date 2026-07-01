@@ -47,7 +47,7 @@ struct RegistryState {
     stream_added: Condvar,
 }
 
-/// Daemon runtime metadata
+/// Runs the daemon in smoke or serving mode
 pub fn run_daemon(daemon_arguments: DaemonArguments) -> ExitCode {
     let result = if daemon_arguments.smoke {
         run_smoke_daemon(&daemon_arguments)

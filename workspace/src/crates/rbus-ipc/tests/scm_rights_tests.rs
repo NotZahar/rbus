@@ -121,7 +121,7 @@ fn control_frame_without_file_descriptors_roundtrips_on_fd_reader() -> Result<()
 
 fn seqpacket_pair() -> Result<(UnixStream, UnixStream), Warning> {
     let mut file_descriptors = [INVALID_FILE_DESCRIPTOR; SOCKET_PAIR_DESCRIPTOR_COUNT];
-    // SAFETY: socketpair initializes both descriptors in file_descriptors on success.
+    // SAFETY: socketpair initializes both descriptors in file_descriptors on success
     let result = unsafe {
         libc::socketpair(
             libc::AF_UNIX,
@@ -137,21 +137,17 @@ fn seqpacket_pair() -> Result<(UnixStream, UnixStream), Warning> {
             "seqpacket_pair",
         ));
     }
-    // SAFETY: both descriptors are newly created connected SOCK_SEQPACKET endpoints.
+    // SAFETY: both descriptors are newly created connected SOCK_SEQPACKET endpoints
     let sender = unsafe { UnixStream::from_raw_fd(file_descriptors[SEQPACKET_SENDER_INDEX]) };
-    // SAFETY: both descriptors are newly created connected SOCK_SEQPACKET endpoints.
+    // SAFETY: both descriptors are newly created connected SOCK_SEQPACKET endpoints
     let receiver = unsafe { UnixStream::from_raw_fd(file_descriptors[SEQPACKET_RECEIVER_INDEX]) };
     Ok((sender, receiver))
 }
 
 fn write_all(raw_file_descriptor: libc::c_int, mut bytes: &[u8]) -> Result<(), Warning> {
     while !bytes.is_empty() {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - scm_rights_sends_and_receives_file_descriptor
+        // SAFETY: `bytes` is a live input slice and `raw_file_descriptor` is supplied by the test
+        // as an open descriptor
         let written =
             unsafe { libc::write(raw_file_descriptor, bytes.as_ptr().cast(), bytes.len()) };
         if written < 0 {
@@ -180,12 +176,8 @@ fn read_exact_from_start(
     seek_start(raw_file_descriptor)?;
     let mut read_count = 0_usize;
     while read_count < buffer.len() {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - scm_rights_sends_and_receives_file_descriptor
+        // SAFETY: The remaining buffer slice is valid for writes, and the descriptor is open for
+        // reading in this test helper
         let current_read_count = unsafe {
             libc::read(
                 raw_file_descriptor,
@@ -220,12 +212,8 @@ fn read_exact_from_start(
 }
 
 fn seek_start(raw_file_descriptor: libc::c_int) -> Result<(), Warning> {
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - scm_rights_sends_and_receives_file_descriptor
+    // SAFETY: `lseek` receives an open descriptor supplied by the test and uses constant seek
+    // parameters
     let offset = unsafe { libc::lseek(raw_file_descriptor, 0, libc::SEEK_SET) };
     if offset < 0 {
         return Err(Warning::new(

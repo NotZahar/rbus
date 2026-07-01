@@ -1,6 +1,6 @@
 use rbus_ipc::control::{FrameHeader, Opcode};
 
-/// Control response metadata
+/// Builds the daemon HELLO response header
 pub fn handle_hello() -> FrameHeader {
     FrameHeader::new(
         Opcode::Hello,

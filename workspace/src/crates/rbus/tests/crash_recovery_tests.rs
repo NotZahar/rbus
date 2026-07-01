@@ -303,19 +303,18 @@ fn wait_until_daemon_knows_stream(domain: &str, topic: &str) {
 }
 
 fn fork_process() -> libc::pid_t {
-    // SAFETY: Required invariants are upheld
-    // Internal note
+    // SAFETY: `fork` has no pointer arguments; the child exits through `_exit` in test helpers
     let child_pid = unsafe { libc::fork() };
     assert!(child_pid >= CHILD_PROCESS_PID, "fork should succeed");
     child_pid
 }
 
 fn kill_child_and_wait(child_pid: libc::pid_t) {
-    // SAFETY: Required invariants are upheld
+    // SAFETY: `child_pid` was returned by `fork` and is still owned by this test
     let kill_result = unsafe { libc::kill(child_pid, libc::SIGKILL) };
     assert_eq!(kill_result, SUCCESS_RETURN_CODE, "kill should succeed");
     let mut status = INITIAL_WAIT_STATUS;
-    // SAFETY: Required invariants are upheld
+    // SAFETY: `status` points to a valid stack slot for `waitpid` to fill
     let waited_pid = unsafe { libc::waitpid(child_pid, &mut status, 0) };
     assert_eq!(
         waited_pid, child_pid,
@@ -333,7 +332,7 @@ fn kill_child_and_wait(child_pid: libc::pid_t) {
 }
 
 fn child_exit() -> ! {
-    // SAFETY: Required invariants are upheld
+    // SAFETY: `_exit` terminates the child immediately and does not run Rust destructors
     unsafe {
         libc::_exit(libc::EXIT_FAILURE);
     }
@@ -341,7 +340,7 @@ fn child_exit() -> ! {
 
 fn write_pipe_byte(file_descriptor: RawFd, byte: u8) {
     let buffer = [byte];
-    // SAFETY: Required invariants are upheld
+    // SAFETY: `buffer` is valid for one byte and `file_descriptor` is a live pipe write end
     let written = unsafe {
         libc::write(
             file_descriptor,
@@ -362,7 +361,7 @@ struct Pipe {
 impl Pipe {
     fn new() -> Self {
         let mut file_descriptors = [INVALID_FILE_DESCRIPTOR; PIPE_FILE_DESCRIPTOR_COUNT];
-        // SAFETY: Required invariants are upheld
+        // SAFETY: `file_descriptors` points to storage for the two descriptors returned by `pipe`
         let result = unsafe { libc::pipe(file_descriptors.as_mut_ptr()) };
         assert_eq!(result, SUCCESS_RETURN_CODE, "pipe operation should succeed");
         Self {
@@ -377,7 +376,7 @@ impl Pipe {
             events: libc::POLLIN,
             revents: 0,
         };
-        // SAFETY: Required invariants are upheld
+        // SAFETY: `poll_descriptor` points to one initialized descriptor entry
         let poll_result = unsafe {
             libc::poll(
                 &mut poll_descriptor,
@@ -390,7 +389,7 @@ impl Pipe {
             "pipe operation should succeed"
         );
         let mut byte = 0_u8;
-        // SAFETY: Required invariants are upheld
+        // SAFETY: `byte` points to one writable byte and `read_fd` is a live pipe read end
         let read_count = unsafe {
             libc::read(
                 self.read_fd,
@@ -423,7 +422,7 @@ impl Drop for Pipe {
 
 fn close_file_descriptor(file_descriptor: &mut RawFd) {
     if *file_descriptor != INVALID_FILE_DESCRIPTOR {
-        // SAFETY: Required invariants are upheld
+        // SAFETY: The descriptor is owned by this helper and is set invalid after close
         unsafe {
             libc::close(*file_descriptor);
         }

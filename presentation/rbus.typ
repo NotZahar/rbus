@@ -65,6 +65,7 @@
   #v(0.15em)
   #text(size: body-size, fill: ink)[#label]
 ]
+#let scheme-label(body) = text(size: body-size, weight: 400, fill: ink)[#body]
 #let bar(label, value, width) = grid(
   columns: (4.9cm, 1fr, 2.3cm),
   gutter: 0.55em,
@@ -96,9 +97,64 @@
     text(size: body-size, weight: weight, fill: fill)[#e],
   )
 }
+#let diagram-node(body, width: 3.2cm, height: 1.25cm) = box(
+  width: width,
+  height: height,
+)[
+  #align(center + horizon)[
+    #text(size: body-size, weight: 800, fill: ink)[#body]
+  ]
+]
+#let diagram-arrow(body) = align(center + horizon)[
+  #text(size: body-size, weight: 800, fill: ink)[#body]
+]
+#let segment-block(title, body, width: 3.2cm) = box(
+  width: width,
+  height: 1.65cm,
+)[
+  #align(center)[
+    #text(size: body-size, weight: 800, fill: ink)[#title]
+    #v(0.12em)
+    #text(size: body-size, fill: ink)[#body]
+  ]
+]
+#let flow-width = 10.2cm
+#let path-label(body, width: flow-width) = block(width: width)[
+  #align(center)[
+    #text(size: body-size, weight: 800, fill: ink)[#body]
+  ]
+]
+#let flow-node(body, width: flow-width) = block(
+  width: width,
+)[
+  #align(center)[
+    #text(size: body-size, weight: 400, fill: ink)[#body]
+  ]
+]
+#let flow-down = block(width: flow-width)[
+  #v(0.16em)
+  #align(center)[#scale(x: 72%, y: 72%, reflow: true)[#text(size: body-size, weight: 400, fill: ink)[↓]]]
+  #v(0.16em)
+]
+#let memory-row(label, note, height: 0.9cm) = box(
+  width: 11.8cm,
+  height: height,
+)[
+  #align(center + horizon)[
+    #text(size: body-size, weight: 400, fill: ink)[#label]
+  ]
+]
+#let mapping-row(left, right) = grid(
+  columns: (2.8cm, 0.6cm, 3.8cm),
+  gutter: 0.15em,
+  align: horizon,
+  text(size: body-size, font: "IBM Plex Mono", fill: ink)[#left],
+  text(size: body-size, weight: 400, fill: ink)[→],
+  text(size: body-size, font: "IBM Plex Mono", fill: ink)[#right],
+)
 
 #title-slide[
-  #v(1.2em)
+  #v(0.65em)
   #text(size: title-size, weight: 850, fill: green)[rbus]
   #v(0.55em)
   #text(size: large-size, weight: 750, fill: ink)[локальная высокопроизводительная шина сообщений \
@@ -107,144 +163,210 @@
 
 == Проблема
 
-#lead[Нужно быстро передавать данные между процессами на одной машине]
+#lead[Нужно передавать данные между процессами в рамках одного устройства]
 
 #v(0.55em)
 
-- Универсальные robotics-фреймворки часто рассчитаны на широкий класс систем
-- В них есть сетевые сценарии, разные режимы доставки и много runtime-настроек
-- В наших задачах все процессы работают на одном Linux-устройстве
-- Поэтому главный вопрос проще: как сделать быстрый локальный IPC без лишних копий
+- Универсальные робототехнические фреймворки (по типу ROS 2) часто рассчитаны на широкий класс систем
+
+- В них есть сетевые сценарии, разные режимы доставки (QoS-ы) и куча runtime-настроек
+
+- Есть сценарии, где такая универсальность не требуется - например, когда процессы живут физически в одном месте
 
 #v(0.7em)
-#accent[rbus не заменяет универсальный middleware целиком]
+#accent[Отсюда возникла идея сделать локальный транспорт, который и работает шустро, и не ест много ресурсов CPU]
 
-Это локальный IPC/SHM-транспорт для среза, где участники находятся на одном устройстве
+== Цель проекта
 
-== Цели проекта
+#lead[Сделать такой транспорт]
 
-#lead[Сделать локальный fast path для publish/subscribe]
-
-#v(0.55em)
-
-- #accent[Производительность] — shared memory, loaned payload без копирования, non-blocking hot path без syscall и heap allocation
-- #accent[Простая модель и локальный scope] — минимальный Rust API, одна машина, один daemon registry, без попытки заменить универсальный middleware
-- #accent[Надёжность] — cleanup при падении процессов, closed stream через shared memory, restart daemon-а не ломает уже attached data plane
-- #accent[Диагностика] — rbus-cli, doctor, stats, warnings, inspect, benchmark smoke
-
-== Требования
-
-#lead[Что должен уметь текущий этап]
+Поскольку основным паттерном взаимодействия в такого рода системах является publish/subscribe, то основное внимание в работе будет уделено именно ему
 
 #v(0.55em)
 
-#accent[Функциональные]
+Что требуется:
 
-- несколько publisher-ов и subscriber-ов на topic
-- fan-out доставки одному и нескольким consumer-ам
-- blocking и non-blocking receive
-- контрольный daemon и CLI-диагностика
-- cleanup после смерти publisher/subscriber
+- #accent[Производительность] — активное использование shared memory, loaned payload без копирования, блокирующий и неблокирующий пути передачи с минимальным количеством syscall-ов
 
-#v(0.45em)
-#accent[Нефункциональные]
+- #accent[Простая модель и локальный scope] — простой и понятный API, одно устройство, один daemon, без попытки сделать универсальный middleware
 
-- Linux-only, локальная машина
-- payload не проходит через daemon
-- 0 syscalls/message для non-blocking data path
-- 0 allocations/message в zero-copy hot path
-- ABI/version contracts и воспроизводимые бенчмарки
+- #accent[Надёжность] — освобождение ресурсов при падении/штатной остановки процессов, restart daemon-а не должен ломать уже настроенный путь для данных
+
+- #accent[Простая и информативная диагностика] — cli-утилиты, stack trace-ы и т. д.
 
 == Границы проекта
 
-#lead[Что входит в текущий этап]
+#lead[Что не входит в текущий этап]
 
-#v(0.55em)
+- сетевой транспорт
 
-Локальный publish/subscribe, shared-memory ring, FD passing, daemon registry, warning model, CLI, benchmark harness
+- сложные политики доставки
 
-#v(0.75em)
-#lead[Что не входит]
+- async/callback API
 
-Сетевой транспорт, сложные политики доставки, async/callback API, serde-схемы, C/Python bindings, автоматический запуск daemon-а
+- serde-схемы
 
-== Что сравниваем
+- C/Python bindings
 
-#lead[Unix socket baseline против rbus SHM data path]
+- автоматический запуск daemon-а
 
-#v(0.55em)
+== Архитектура
 
-- #accent[Одинаковый scope] — локальный IPC на одной Linux-машине
-- #accent[Unix socket] — payload проходит через kernel socket path и socket buffer
-- #accent[rbus] — payload лежит в shared-memory ring, loaned path не копирует payload
-- #accent[Что проверяем] — что даёт переход от socket baseline к SHM data path
-
-== Архитектура: общий вид
-
-#lead[Daemon управляет ресурсами, payload идёт напрямую]
+#lead[Daemon строит связи, payload идёт напрямую]
 
 #v(0.55em)
 
 #accent[Control plane]
 
-Publisher process ↔ rbusd ↔ Subscriber process
+#let arch-columns = (3.3cm, 0.9cm, 4.1cm, 0.9cm, 3.3cm)
 
-- REGISTER / ATTACH / INSPECT через Unix SOCK_SEQPACKET
+#grid(
+  columns: arch-columns,
+  gutter: 0.2em,
+  align: horizon,
+  diagram-node([Publisher], width: 3.3cm),
+  diagram-arrow[↔],
+  diagram-node([rbusd], width: 4.1cm),
+  diagram-arrow[↔],
+  diagram-node([Subscriber], width: 3.3cm),
+)
+
+- REGISTER / ATTACH / INSPECT идут через rbusd по Unix SOCK_SEQPACKET
+
 - FD передаются через SCM_RIGHTS
+
 - daemon владеет registry и lifecycle
 
-#v(0.65em)
+#v(0.45em)
 #accent[Data plane]
 
-Publisher stream memfd/mmap MAP_SHARED → Subscriber cached pointers
+#grid(
+  columns: arch-columns,
+  gutter: 0.2em,
+  align: horizon,
+  diagram-node([Publisher], width: 3.3cm),
+  diagram-arrow[→],
+  diagram-node([memfd\ MAP_SHARED], width: 4.1cm),
+  diagram-arrow[→],
+  diagram-node([Subscriber], width: 3.3cm),
+)
 
-- daemon не копирует payload
-- daemon не маршрутизирует payload
+- daemon не копирует и не маршрутизирует payload
+
 - после attach hot path работает через shared memory
 
-== Архитектура: control plane
-
-#lead[rbusd нужен для setup, registry и cleanup]
+== Flow
 
 #v(0.55em)
 
-- #accent[REGISTER_PUBLISHER] создаёт memfd stream segment и выдаёт publisher_id, stream_id, FD
-- #accent[REGISTER_SUBSCRIBER] выдаёт subscriber_id и metadata для attach
-- #accent[ATTACH_STREAMS] передаёт stream FD через SCM_RIGHTS
-- #accent[NOTIFY_STREAM_ADDED] добавляет новые publisher stream-ы без refresh в steady state
-- persistent control session связывает registry entries с процессом
+#grid(
+  columns: (1fr, 1fr),
+  gutter: 0.9em,
+  [
+    #align(center)[
+      #block(width: flow-width)[
+        #path-label[Publisher path]
+        #v(0.28em)
+        #grid(
+          columns: 1fr,
+          gutter: 0.10cm,
+          flow-node[Bus::connect()],
+          flow-down,
+          flow-node[bus.publisher(topic, TopicConfig::new(max_size, depth))],
+          flow-down,
+          flow-node[rbus отправляет REGISTER_PUBLISHER в rbusd],
+          flow-down,
+          flow-node[rbusd создаёт memfd stream segment],
+          flow-down,
+          flow-node[rbusd делает ftruncate до нужного размера],
+          flow-down,
+          flow-node[rbusd инициализирует header/layout],
+          flow-down,
+          flow-node[rbusd передаёт FD publisher-у через SCM_RIGHTS],
+          flow-down,
+          flow-node[publisher mmap-ит segment],
+        )
+      ]
+    ]
+  ],
+  [
+    #align(center)[
+      #block(width: flow-width)[
+        #path-label[Subscriber path]
+        #v(0.28em)
+        #grid(
+          columns: 1fr,
+          gutter: 0.10cm,
+          flow-node[bus.subscriber(topic)],
+          flow-down,
+          flow-node[rbus отправляет REGISTER_SUBSCRIBER],
+          flow-down,
+          flow-node[rbusd выдаёт subscriber_id и topic wait FD],
+          flow-down,
+          flow-node[subscriber вызывает ATTACH_STREAMS],
+          flow-down,
+          flow-node[rbusd передаёт FD всех stream-ов этого topic-а],
+          flow-down,
+          flow-node[subscriber mmap-ит эти stream segment-ы],
+        )
+      ]
+    ]
+  ],
+)
 
-== Архитектура: data plane
+== Ring в shared memory
 
-#lead[Один publisher stream — это fixed-size SPMC ring]
+#lead[Ring — фиксированный массив slot-ов, который используется циклически]
 
-#v(0.55em)
+#v(0.35em)
 
-#accent[Memory layout]
+#align(center)[
+  #scale(x: 65%, y: 65%, reflow: true)[
+    #box(width: 25cm)[
+      ```text
+      ┌──────────────────────┐
+      │ SegmentHeader        │  общая информация о stream-е
+      ├──────────────────────┤
+      │ StreamCounters       │  статистика
+      ├──────────────────────┤
+      │ SlotHeader[0]        │  metadata slot-а 0
+      │ SlotHeader[1]        │  metadata slot-а 1
+      │ ...                  │
+      │ SlotHeader[63]       │  metadata slot-а 63
+      ├──────────────────────┤
+      │ PayloadSlot[0]       │  bytes сообщения для slot-а 0
+      │ PayloadSlot[1]       │  bytes сообщения для slot-а 1
+      │ ...                  │
+      │ PayloadSlot[63]      │  bytes сообщения для slot-а 63
+      └──────────────────────┘
+      ```
+    ]
+  ]
+]
 
-- SegmentHeader
-- StreamCounters
-- SlotHeader[depth]
-- PayloadSlot[depth]
+#v(0.18em)
 
-#v(0.5em)
-#accent[Slot protocol]
+Publisher пишет payload не "просто в stream", а в конкретный payload slot внутри stream-а:
 
-- writer получает slot и пишет payload
-- commit публикуется release-store в state_seq
-- reader pin-ит slot acquire/release CAS-ом
-- MessageRef освобождает reader bit при Drop
-- blocking recv ждёт topic-level futex segment
+#v(0.08em)
 
-== Публичный API
+#align(center)[
+  #scale(x: 72%, y: 72%, reflow: true)[
+    ```text
+    сообщение #0  -> PayloadSlot[0]
+    сообщение #1  -> PayloadSlot[1]
+    сообщение #2  -> PayloadSlot[2]
+    ...
+    сообщение #63 -> PayloadSlot[63]
+    сообщение #64 -> PayloadSlot[0] снова
+    сообщение #65 -> PayloadSlot[1] снова
+    ```
+  ]
+]
 
-#lead[Минимальные типы, без лишней runtime-модели]
+#v(0.08em)
 
-#v(0.55em)
-
-- #accent[Типы] — Bus, TopicConfig, Publisher, Subscriber, LoanedMessage, MessageRef, Stats, Warning
-- #accent[Сценарий] — connect → publisher/subscriber → loan → write payload → publish → receive
-- #accent[Контракты] — public API 0.1.0, stream ABI 5, topic wait ABI 1
+Поэтому это называется ring: после последней ячейки возвращаемся в начало.
 
 == Гарантии hot path
 
@@ -298,6 +420,17 @@ Publisher stream memfd/mmap MAP_SHARED → Subscriber cached pointers
 - payload: 64 B, 4 KiB, 64 KiB, 1 MiB
 - paced / 30 Hz: controlled-load latency
 - low-CPU recv: 5 секунд, 150 сообщений, 1P1S
+
+== Что сравниваем
+
+#lead[Unix socket baseline против rbus SHM data path]
+
+#v(0.55em)
+
+- #accent[Одинаковый scope] — локальный IPC на одной Linux-машине
+- #accent[Unix socket] — payload проходит через kernel socket path и socket buffer
+- #accent[rbus] — payload лежит в shared-memory ring, loaned path не копирует payload
+- #accent[Что проверяем] — что даёт переход от socket baseline к SHM data path
 
 == Результаты: throughput
 

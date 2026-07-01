@@ -1,4 +1,4 @@
-//! Internal documentation
+//! Stream segment layout calculation
 
 use core::mem::{align_of, size_of};
 
@@ -10,12 +10,12 @@ use crate::result::RbusResult;
 use crate::stats::StreamCounters;
 use crate::warning::{Warning, WarningCode};
 
-/// Stream runtime metadata
+/// Byte offsets and strides for all regions inside a stream segment
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SegmentLayout {
-    /// Internal documentation
+    /// Total byte length of the segment
     pub segment_size: usize,
-    /// Internal documentation
+    /// Aligned byte length of the segment header
     pub header_size: usize,
     /// Offset counters
     pub counters_offset: usize,
@@ -23,15 +23,15 @@ pub struct SegmentLayout {
     pub slots_offset: usize,
     /// Offset payload area
     pub payload_offset: usize,
-    /// Payload metadata
+    /// Aligned distance between consecutive payload slots
     pub payload_stride: usize,
-    /// Payload metadata
+    /// Usable payload bytes in each slot
     pub slot_size: usize,
     /// Depth ring buffer
     pub depth: usize,
 }
 
-/// Internal documentation
+/// Calculates a stream segment layout for a slot size and power-of-two depth
 pub fn calculate_segment_layout(slot_size: usize, depth: usize) -> RbusResult<SegmentLayout> {
     if slot_size == 0 || depth == 0 || !depth.is_power_of_two() {
         return Err(Warning::new(

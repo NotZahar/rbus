@@ -1,4 +1,4 @@
-//! Internal documentation
+//! Data-plane counters and diagnostic snapshots
 
 use core::mem::size_of;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -9,30 +9,30 @@ const COUNTER_INITIAL_VALUE: u64 = 0;
 const STREAM_COUNTER_RESERVED_LINES: usize = 9;
 const COUNTER_PADDING_U64S: usize = (CACHE_LINE_BYTES - size_of::<AtomicU64>()) / size_of::<u64>();
 
-/// CLI metadata
+/// Snapshot of stream counters returned by diagnostics
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Stats {
-    /// Internal documentation
+    /// Messages committed by the publisher
     pub published_messages: u64,
-    /// Internal documentation
+    /// Messages delivered to subscribers
     pub received_messages: u64,
-    /// Internal documentation
+    /// Messages skipped because a subscriber cursor fell behind
     pub skipped_messages: u64,
-    /// Slot metadata
+    /// Times a writer found a slot pinned by readers
     pub backpressure_pinned_slot: u64,
-    /// Warning model metadata
+    /// Total warnings observed for the stream
     pub warnings_total: u64,
-    /// Stream runtime metadata
+    /// Number of streams currently considered connected in this snapshot
     pub connected_streams: u64,
-    /// Stream runtime metadata
+    /// Number of stream disconnect events observed
     pub disconnected_streams: u64,
-    /// Sequence metadata
+    /// Current publisher sequence at snapshot time
     pub current_sequence: u64,
-    /// Subscriber runtime metadata
+    /// Subscribers attached to the stream
     pub subscriber_count: u64,
-    /// Publisher runtime metadata
+    /// Whether the publisher that owns this stream is alive
     pub publisher_alive: bool,
-    /// Internal documentation
+    /// Number of successful subscriber attach operations
     pub attach_count: u64,
 }
 
@@ -44,7 +44,7 @@ pub struct CacheLineCounter {
 }
 
 impl CacheLineCounter {
-    /// Creates a value
+    /// Creates a cache-line counter with an initial value
     pub const fn new(value: u64) -> Self {
         Self {
             value: AtomicU64::new(value),
@@ -74,29 +74,29 @@ impl Default for CacheLineCounter {
     }
 }
 
-/// Internal documentation
+/// Shared-memory counters for one stream
 #[repr(C, align(64))]
 pub struct StreamCounters {
-    /// Internal documentation
+    /// Messages committed by the publisher
     pub published_messages: CacheLineCounter,
-    /// Internal documentation
+    /// Messages delivered to subscribers
     pub received_messages: CacheLineCounter,
-    /// Internal documentation
+    /// Messages skipped because a subscriber cursor fell behind
     pub skipped_messages: CacheLineCounter,
-    /// Slot metadata
+    /// Times a writer found a slot pinned by readers
     pub backpressure_pinned_slot: CacheLineCounter,
-    /// Warning model metadata
+    /// Total warnings observed for the stream
     pub warnings_total: CacheLineCounter,
-    /// Internal documentation
+    /// Number of successful subscriber attach operations
     pub attach_count: CacheLineCounter,
-    /// Stream runtime metadata
+    /// Number of stream disconnect events observed
     pub disconnected_streams: CacheLineCounter,
-    /// Shared memory ABI metadata
+    /// Reserved cache-line counters for ABI-compatible expansion
     pub reserved: [CacheLineCounter; STREAM_COUNTER_RESERVED_LINES],
 }
 
 impl StreamCounters {
-    /// Creates a value
+    /// Creates zero-initialized stream counters
     pub fn new() -> Self {
         Self {
             published_messages: CacheLineCounter::default(),
@@ -110,7 +110,7 @@ impl StreamCounters {
         }
     }
 
-    /// Internal documentation
+    /// Loads all counters into a diagnostic snapshot
     pub fn snapshot(
         &self,
         current_sequence: u64,
@@ -132,7 +132,7 @@ impl StreamCounters {
         }
     }
 
-    /// Warning model metadata
+    /// Increments the total warning counter
     pub fn increment_warnings_total(&self) {
         self.warnings_total.fetch_add(1, Ordering::Relaxed);
     }

@@ -11,52 +11,52 @@ use rbus_ipc::stream_segment::{
     StreamSegmentMetadata, clear_subscriber_reader_bits, mark_stream_closed,
 };
 
-/// Daemon runtime metadata
+/// Aggregate daemon registry counters
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct RegistrySnapshot {
-    /// Topic runtime metadata
+    /// Number of topics with publishers or subscribers
     pub topic_count: u64,
-    /// Publisher runtime metadata
+    /// Number of registered publishers
     pub publisher_count: u64,
-    /// Subscriber runtime metadata
+    /// Number of registered subscribers
     pub subscriber_count: u64,
-    /// Stream runtime metadata
+    /// Number of active stream segments
     pub stream_count: u64,
     /// Registry generation
     pub generation: u64,
 }
 
-/// Internal documentation
+/// Publisher registration result plus descriptors to pass to the client
 pub struct RegisteredPublisher {
-    /// Encoded response payload fields
+    /// Response payload sent to the publisher
     pub response: RegisterPublisherResponse,
-    /// Daemon runtime metadata
+    /// Stream memfd descriptor
     pub file_descriptor: RawFd,
-    /// Topic runtime metadata
+    /// Topic wait memfd descriptor
     pub topic_wait_file_descriptor: RawFd,
 }
 
-/// Internal documentation
+/// Subscriber registration result plus topic wait descriptor
 pub struct RegisteredSubscriber {
-    /// Encoded response payload fields
+    /// Response payload sent to the subscriber
     pub response: RegisterSubscriberResponse,
-    /// Topic runtime metadata
+    /// Topic wait memfd descriptor
     pub topic_wait_file_descriptor: RawFd,
 }
 
-/// Internal documentation
+/// Stream attach response plus stream descriptors
 pub struct AttachStreamsResult {
-    /// Response payload
+    /// Response payload sent to the subscriber
     pub response: AttachStreamsResponse,
-    /// Stream runtime metadata
+    /// Stream memfd descriptors matching the response order
     pub file_descriptors: Vec<RawFd>,
 }
 
-/// Internal documentation
+/// Stream notification response plus stream descriptors
 pub struct NotifyStreamAddedResult {
-    /// Response payload
+    /// Response payload sent to the subscriber
     pub response: NotifyStreamAddedResponse,
-    /// Stream runtime metadata
+    /// Stream memfd descriptors matching the response order
     pub file_descriptors: Vec<RawFd>,
 }
 

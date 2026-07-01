@@ -1,4 +1,4 @@
-//! Warning model metadata
+//! Warning codes and structured warning context
 
 use crate::ids::{StreamId, TopicHash};
 use crate::sequence::Sequence;
@@ -9,48 +9,48 @@ const HAS_TOPIC_HASH: u8 = 1 << 2;
 const HAS_STREAM_ID: u8 = 1 << 3;
 const HAS_MONOTONIC_TIMESTAMP_NS: u8 = 1 << 4;
 
-/// Internal documentation
+/// Warning category used by APIs that report recoverable failures
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum WarningCode {
-    /// Daemon runtime metadata
+    /// The rbus daemon is not reachable
     DaemonUnavailable,
-    /// Internal documentation
+    /// A peer used an unsupported protocol version or frame shape
     ProtocolMismatch,
-    /// Internal documentation
+    /// The operation was rejected by OS permissions
     PermissionDenied,
-    /// Internal documentation
+    /// A syscall returned an unexpected failure
     SyscallFailed,
-    /// Linux IPC metadata
+    /// A shared memory mapping failed
     MmapFailed,
-    /// Internal documentation
+    /// The caller supplied an invalid configuration
     InvalidConfig,
-    /// Slot metadata
+    /// The payload does not fit in the configured slot size
     MessageTooLarge,
-    /// Slot metadata
+    /// A writer could not reuse a slot because a reader still pins it
     BackpressurePinnedSlot,
-    /// Subscriber runtime metadata
+    /// A subscriber cursor skipped one or more messages
     MessagesSkipped,
-    /// Internal documentation
+    /// A wait operation exceeded its deadline
     Timeout,
-    /// Stream runtime metadata
+    /// A socket, stream, or peer disconnected
     Disconnected,
-    /// Shared memory ABI metadata
+    /// A mapped segment has an unsupported ABI version or magic
     SegmentAbiMismatch,
-    /// Internal documentation
+    /// A segment was rejected and must not be attached
     SegmentQuarantined,
-    /// Subscriber runtime metadata
+    /// The stream has no available reader bit for another subscriber
     SubscriberLimitReached,
-    /// Internal documentation
+    /// Size, descriptor, or memory limits prevented the operation
     ResourceLimit,
-    /// Internal documentation
+    /// Cleanup completed only part of the requested work
     CleanupIncomplete,
-    /// Internal documentation
+    /// An internal invariant was violated but reported as a warning
     InternalInvariantWarning,
 }
 
 impl WarningCode {
-    /// Returns a value
+    /// Returns the stable warning code name used in diagnostics
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::DaemonUnavailable => "DaemonUnavailable",
@@ -73,7 +73,7 @@ impl WarningCode {
         }
     }
 
-    /// Returns a value
+    /// Returns a short human-readable warning description
     pub const fn description(self) -> &'static str {
         match self {
             Self::DaemonUnavailable => "rbusd daemon is unavailable",
@@ -96,7 +96,7 @@ impl WarningCode {
         }
     }
 
-    /// Warning model metadata
+    /// Returns all currently defined warning codes
     pub const fn all_codes() -> &'static [Self] {
         &[
             Self::DaemonUnavailable,
@@ -120,7 +120,7 @@ impl WarningCode {
     }
 }
 
-/// Internal documentation
+/// Recoverable warning with component, operation, and optional context
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Warning {
     component: &'static str,
@@ -135,7 +135,7 @@ pub struct Warning {
 }
 
 impl Warning {
-    /// Warning model metadata
+    /// Creates a warning with no optional context
     pub const fn new(code: WarningCode, component: &'static str, operation: &'static str) -> Self {
         Self {
             component,
@@ -150,27 +150,27 @@ impl Warning {
         }
     }
 
-    /// Warning model metadata
+    /// Returns the warning category
     pub const fn code(&self) -> WarningCode {
         self.code
     }
 
-    /// Returns a value
+    /// Returns the component that emitted the warning
     pub const fn component(&self) -> &'static str {
         self.component
     }
 
-    /// Returns a value
+    /// Returns the operation that emitted the warning
     pub const fn operation(&self) -> &'static str {
         self.operation
     }
 
-    /// Returns a value
+    /// Returns the warning code description
     pub const fn message(&self) -> &'static str {
         self.code.description()
     }
 
-    /// Warning model metadata
+    /// Returns the captured OS errno when one was attached
     pub const fn os_errno(&self) -> Option<i32> {
         if self.context_flags & HAS_OS_ERRNO == 0 {
             None
@@ -179,7 +179,7 @@ impl Warning {
         }
     }
 
-    /// Sequence metadata
+    /// Returns the related message sequence when one was attached
     pub const fn sequence(&self) -> Option<Sequence> {
         if self.context_flags & HAS_SEQUENCE == 0 {
             None
@@ -188,7 +188,7 @@ impl Warning {
         }
     }
 
-    /// Topic runtime metadata
+    /// Returns the related topic hash when one was attached
     pub const fn topic_hash(&self) -> Option<TopicHash> {
         if self.context_flags & HAS_TOPIC_HASH == 0 {
             None
@@ -197,7 +197,7 @@ impl Warning {
         }
     }
 
-    /// Stream runtime metadata
+    /// Returns the related stream id when one was attached
     pub const fn stream_id(&self) -> Option<StreamId> {
         if self.context_flags & HAS_STREAM_ID == 0 {
             None
@@ -206,7 +206,7 @@ impl Warning {
         }
     }
 
-    /// Returns a value
+    /// Returns the captured monotonic timestamp when one was attached
     pub const fn monotonic_timestamp_ns(&self) -> Option<u64> {
         if self.context_flags & HAS_MONOTONIC_TIMESTAMP_NS == 0 {
             None
@@ -215,35 +215,35 @@ impl Warning {
         }
     }
 
-    /// Warning model metadata
+    /// Attaches an OS errno value to the warning
     pub const fn with_os_errno(mut self, os_errno: i32) -> Self {
         self.os_errno = os_errno;
         self.context_flags |= HAS_OS_ERRNO;
         self
     }
 
-    /// Warning model metadata
+    /// Attaches a message sequence to the warning
     pub const fn with_sequence(mut self, sequence: Sequence) -> Self {
         self.sequence = sequence.as_u64();
         self.context_flags |= HAS_SEQUENCE;
         self
     }
 
-    /// Warning model metadata
+    /// Attaches a topic hash to the warning
     pub const fn with_topic_hash(mut self, topic_hash: TopicHash) -> Self {
         self.topic_hash = topic_hash.as_u64();
         self.context_flags |= HAS_TOPIC_HASH;
         self
     }
 
-    /// Warning model metadata
+    /// Attaches a stream id to the warning
     pub const fn with_stream_id(mut self, stream_id: StreamId) -> Self {
         self.stream_id = stream_id.as_u64();
         self.context_flags |= HAS_STREAM_ID;
         self
     }
 
-    /// Warning model metadata
+    /// Attaches a monotonic timestamp in nanoseconds to the warning
     pub const fn with_monotonic_timestamp_ns(mut self, monotonic_timestamp_ns: u64) -> Self {
         self.monotonic_timestamp_ns = monotonic_timestamp_ns;
         self.context_flags |= HAS_MONOTONIC_TIMESTAMP_NS;

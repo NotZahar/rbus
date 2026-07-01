@@ -1,4 +1,4 @@
-/// Daemon runtime metadata
+/// Subscriber id stored in daemon diagnostics
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SubscriberEntry {
     /// Subscriber id

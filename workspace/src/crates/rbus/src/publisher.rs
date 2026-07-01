@@ -16,7 +16,7 @@ use crate::reregister::PublisherReregisterWorker;
 use crate::stats::Stats;
 use crate::stream::StreamInner;
 
-/// Publisher runtime metadata
+/// Publisher handle for one topic stream
 pub struct Publisher {
     _reregister_worker: PublisherReregisterWorker,
     stream: Arc<StreamInner>,
@@ -48,20 +48,20 @@ impl Publisher {
         })
     }
 
-    /// Stream runtime metadata
+    /// Reserves a writable slot for a zero-copy publish
     pub fn loan(&mut self, length: usize) -> Result<LoanedMessage<'_>, Warning> {
         let reservation = self.stream.try_begin_loan(length)?;
         Ok(LoanedMessage::from_reservation(self, reservation))
     }
 
-    /// Internal documentation
+    /// Copies bytes into a loaned slot and publishes them
     pub fn publish_bytes(&mut self, bytes: &[u8]) -> Result<Sequence, Warning> {
         let mut message = self.loan(bytes.len())?;
         message.as_mut_slice().copy_from_slice(bytes);
         message.publish()
     }
 
-    /// Publisher runtime metadata
+    /// Returns a snapshot of this publisher stream's counters
     pub fn stats(&self) -> Stats {
         self.stream.stats()
     }

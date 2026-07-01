@@ -60,7 +60,7 @@ pub fn cleanup_domain(
     Ok(report)
 }
 
-/// CLI metadata
+/// Formats a cleanup report as text or JSON
 pub fn format_cleanup_report(
     domain: &str,
     report: CleanupReport,

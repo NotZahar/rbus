@@ -22,7 +22,7 @@ use crate::wait::ReceiveWaitStatus;
 
 const COMPONENT_RBUS: &str = "rbus";
 
-/// Subscriber runtime metadata
+/// Subscriber handle for one topic
 pub struct Subscriber {
     socket_path: PathBuf,
     topic_hash: TopicHash,
@@ -112,7 +112,7 @@ impl Subscriber {
         )
     }
 
-    /// Internal documentation
+    /// Attempts to receive one message without blocking
     pub fn try_recv(&self) -> Result<Option<MessageRef<'_>>, Warning> {
         match self
             .streams
@@ -164,7 +164,7 @@ impl Subscriber {
         Ok(has_new_stream)
     }
 
-    /// Warning model metadata
+    /// Blocks until a message is received or a warning occurs
     pub fn recv(&self) -> Result<MessageRef<'_>, Warning> {
         loop {
             if let Some(message) = self.try_recv()? {
@@ -174,7 +174,7 @@ impl Subscriber {
         }
     }
 
-    /// Warning model metadata
+    /// Blocks until a message is received or the timeout expires
     pub fn recv_timeout(&self, timeout: Duration) -> Result<Option<MessageRef<'_>>, Warning> {
         let deadline = Instant::now().checked_add(timeout).ok_or_else(|| {
             Warning::new(
@@ -197,7 +197,7 @@ impl Subscriber {
         }
     }
 
-    /// Subscriber runtime metadata
+    /// Returns an aggregate snapshot of attached stream counters
     pub fn stats(&self) -> Stats {
         match self.streams.stats() {
             Ok(stats) => stats,

@@ -13,71 +13,71 @@ const PERCENT_DENOMINATOR: u64 = 100;
 const PERMILLE_DENOMINATOR: u64 = 1_000;
 const PERMYRIAD_DENOMINATOR: u64 = 10_000;
 
-/// Benchmark metadata
+/// Lightweight smoke metrics returned by a benchmark run
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct MetricsSnapshot {
     /// Messages per second
     pub messages_per_second: u64,
-    /// Topic runtime metadata
+    /// Wake latency measured for blocking wait mode
     pub blocking_wait_wake_latency_ns: u64,
 }
 
-/// Benchmark metadata
+/// Aggregated result for one benchmark matrix row
 #[derive(Clone, Debug, PartialEq)]
 pub struct BenchmarkResult {
-    /// Internal documentation
+    /// Scenario name that produced this result
     pub scenario: &'static str,
     /// Transport
     pub transport: TransportKind,
     /// Wait mode
     pub wait_mode: WaitMode,
-    /// Payload metadata
+    /// Payload size in bytes
     pub payload_size: usize,
-    /// Publisher runtime metadata
+    /// Number of publisher processes
     pub publisher_count: u8,
-    /// Subscriber runtime metadata
+    /// Number of subscriber processes
     pub subscriber_count: u8,
-    /// Benchmark metadata
+    /// Load generation mode
     pub load_mode: LoadMode,
-    /// Publisher runtime metadata
+    /// Configured publish rate
     pub rate_hz: f64,
-    /// Publisher runtime metadata
+    /// Scope used to apply `rate_hz`
     pub rate_scope: RateScope,
-    /// Benchmark metadata
+    /// Configured benchmark duration
     pub duration_ms: u64,
-    /// Publisher runtime metadata
+    /// Requested messages per publisher
     pub configured_messages_per_publisher: u32,
-    /// Publisher runtime metadata
+    /// Actual messages each publisher sent
     pub actual_messages_per_publisher: u32,
-    /// Internal documentation
+    /// Total delivered messages included in metrics
     pub measured_messages: u64,
-    /// Publisher runtime metadata
+    /// Number of missed publish deadlines
     pub publish_deadline_miss_count: u64,
-    /// Publisher runtime metadata
+    /// p50 publisher deadline lateness
     pub publish_lateness_p50_ns: u64,
-    /// Publisher runtime metadata
+    /// p90 publisher deadline lateness
     pub publish_lateness_p90_ns: u64,
-    /// Publisher runtime metadata
+    /// p99 publisher deadline lateness
     pub publish_lateness_p99_ns: u64,
-    /// Publisher runtime metadata
+    /// Maximum publisher deadline lateness
     pub publish_lateness_max_ns: u64,
-    /// Publisher runtime metadata
+    /// p50 gap between publishes
     pub inter_publish_gap_p50_ns: u64,
-    /// Publisher runtime metadata
+    /// p99 gap between publishes
     pub inter_publish_gap_p99_ns: u64,
-    /// Subscriber runtime metadata
+    /// p50 gap between receives
     pub inter_receive_gap_p50_ns: u64,
-    /// Subscriber runtime metadata
+    /// p99 gap between receives
     pub inter_receive_gap_p99_ns: u64,
-    /// Benchmark metadata
+    /// Whether backlog metrics are valid for this row
     pub backlog_metric_available: bool,
-    /// Subscriber runtime metadata
+    /// p50 observed ring backlog in messages
     pub ring_backlog_p50_messages: u64,
-    /// Subscriber runtime metadata
+    /// p90 observed ring backlog in messages
     pub ring_backlog_p90_messages: u64,
-    /// Subscriber runtime metadata
+    /// p99 observed ring backlog in messages
     pub ring_backlog_p99_messages: u64,
-    /// Subscriber runtime metadata
+    /// Maximum observed ring backlog in messages
     pub ring_backlog_max_messages: u64,
     /// p50 transport latency
     pub transport_latency_p50_ns: u64,
@@ -119,13 +119,13 @@ pub struct BenchmarkResult {
     pub actual_payload_write_gib_per_second: f64,
     /// Effective payload delivery throughput GiB/sec
     pub effective_payload_delivery_gib_per_second: f64,
-    /// Benchmark metadata
+    /// Process CPU utilization in per-mille units
     pub cpu_utilization_per_mille: u64,
-    /// Benchmark metadata
+    /// Resident set size in bytes
     pub rss_bytes: u64,
-    /// Benchmark metadata
+    /// Proportional set size in bytes
     pub pss_bytes: u64,
-    /// Benchmark metadata
+    /// Voluntary plus non-voluntary context switches
     pub context_switches: u64,
     /// Syscalls/message
     pub syscalls_per_message: f64,
@@ -145,7 +145,7 @@ pub struct BenchmarkResult {
     pub orchestration_wall_time_ns: u64,
 }
 
-/// Percentile snapshot
+/// Percentile snapshot for one sample set
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct LatencyPercentiles {
     /// p50 latency
@@ -161,7 +161,7 @@ pub struct LatencyPercentiles {
 }
 
 impl BenchmarkResult {
-    /// Benchmark metadata
+    /// Builds a result from raw sample sets and run context
     pub fn from_samples(context: BenchmarkResultContext, samples: BenchmarkSampleSets<'_>) -> Self {
         let transport_latency_samples = samples.transport_latency_samples;
         let end_to_end_latency_samples = samples.end_to_end_latency_samples;
@@ -261,40 +261,40 @@ impl BenchmarkResult {
     }
 }
 
-/// Benchmark metadata
+/// Non-sample inputs needed to build a benchmark result
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct BenchmarkResultContext {
-    /// Internal documentation
+    /// Scenario name that produced this result
     pub scenario: &'static str,
     /// Transport
     pub transport: TransportKind,
     /// Wait mode
     pub wait_mode: WaitMode,
-    /// Payload metadata
+    /// Payload size in bytes
     pub payload_size: usize,
-    /// Publisher runtime metadata
+    /// Number of publisher processes
     pub publisher_count: u8,
-    /// Subscriber runtime metadata
+    /// Number of subscriber processes
     pub subscriber_count: u8,
-    /// Benchmark metadata
+    /// Load generation mode
     pub load_mode: LoadMode,
-    /// Publisher runtime metadata
+    /// Configured publish rate
     pub rate_hz: f64,
-    /// Publisher runtime metadata
+    /// Scope used to apply `rate_hz`
     pub rate_scope: RateScope,
-    /// Benchmark metadata
+    /// Configured benchmark duration
     pub duration_ms: u64,
-    /// Publisher runtime metadata
+    /// Requested messages per publisher
     pub configured_messages_per_publisher: u32,
-    /// Publisher runtime metadata
+    /// Actual messages each publisher sent
     pub actual_messages_per_publisher: u32,
-    /// Internal documentation
+    /// Total delivered messages included in metrics
     pub measured_messages: u64,
-    /// Publisher runtime metadata
+    /// Unique messages committed by publishers
     pub unique_published_messages: u64,
-    /// Internal documentation
+    /// Measured benchmark window in nanoseconds
     pub measured_window_ns: u64,
-    /// Internal documentation
+    /// Parent process orchestration wall time
     pub orchestration_wall_time_ns: u64,
     /// Allocation count
     pub allocation_count: u64,
@@ -314,9 +314,9 @@ pub struct BenchmarkResultContext {
     pub skipped_messages: u64,
     /// Backpressure count
     pub backpressure_pinned_slot: u64,
-    /// Publisher runtime metadata
+    /// Missed publish deadlines
     pub publish_deadline_miss_count: u64,
-    /// Benchmark metadata
+    /// Whether backlog fields are valid for this transport
     pub backlog_metric_available: bool,
     /// Startup latency
     pub startup_latency_ns: u64,
@@ -343,7 +343,7 @@ pub struct BenchmarkSampleSets<'a> {
 }
 
 impl LatencyPercentiles {
-    /// Internal documentation
+    /// Builds percentiles from a mutable sample slice
     pub fn from_samples(samples: &mut [u64]) -> Self {
         samples.sort_unstable();
         Self {

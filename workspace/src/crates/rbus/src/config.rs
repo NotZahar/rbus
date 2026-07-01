@@ -3,7 +3,7 @@ use rbus_core::constants::{COMPONENT_CORE, DEFAULT_MAX_MESSAGE_SIZE};
 use rbus_core::layout::calculate_segment_layout;
 use rbus_core::warning::{Warning, WarningCode};
 
-/// Publisher runtime metadata
+/// Publisher-side topic configuration
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TopicConfig {
     max_message_size: usize,
@@ -11,7 +11,7 @@ pub struct TopicConfig {
 }
 
 impl TopicConfig {
-    /// Topic runtime metadata
+    /// Creates a topic configuration with maximum payload size and ring depth
     pub const fn new(max_message_size: usize, depth: usize) -> Self {
         Self {
             max_message_size,
@@ -19,12 +19,12 @@ impl TopicConfig {
         }
     }
 
-    /// Returns a value
+    /// Returns the maximum accepted payload size in bytes
     pub const fn max_message_size(&self) -> usize {
         self.max_message_size
     }
 
-    /// Returns a value
+    /// Returns the ring depth, which must be a power of two
     pub const fn depth(&self) -> usize {
         self.depth
     }

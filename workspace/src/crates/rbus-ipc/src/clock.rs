@@ -1,4 +1,4 @@
-//! CLI metadata
+//! Monotonic clock helpers
 
 use rbus_core::warning::{Warning, WarningCode};
 
@@ -6,17 +6,13 @@ use crate::errno::warning_from_errno;
 
 const COMPONENT_IPC: &str = "rbus-ipc";
 
-/// Returns a value
+/// Returns the current monotonic timestamp in nanoseconds
 pub fn monotonic_timestamp_ns() -> Result<u64, Warning> {
     let mut timespec = libc::timespec {
         tv_sec: 0,
         tv_nsec: 0,
     };
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // Covered by tests:
-    // - monotonic_timestamp_is_non_zero
+    // SAFETY: `timespec` points to a valid stack allocation that `clock_gettime` may fill
     let result =
         unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, core::ptr::addr_of_mut!(timespec)) };
     if result != 0 {

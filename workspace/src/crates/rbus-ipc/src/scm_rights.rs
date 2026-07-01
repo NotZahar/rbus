@@ -1,4 +1,4 @@
-//! Linux IPC metadata
+//! `SCM_RIGHTS` file-descriptor passing over Unix sockets
 
 use std::os::fd::RawFd;
 
@@ -10,16 +10,16 @@ use crate::fd::OwnedFileDescriptor;
 
 const COMPONENT_IPC: &str = "rbus-ipc";
 
-/// Internal documentation
+/// Payload byte count and descriptors received from one socket message
 #[derive(Debug)]
 pub struct ReceivedFileDescriptors {
-    /// Payload metadata
+    /// Number of payload bytes copied into the caller's buffer
     pub byte_count: usize,
-    /// Linux IPC metadata
+    /// File descriptors received from control messages
     pub file_descriptors: Vec<OwnedFileDescriptor>,
 }
 
-/// Payload metadata
+/// Sends a payload and optional file descriptors over a Unix socket
 pub fn send_file_descriptors(
     socket_file_descriptor: RawFd,
     payload: &[u8],
@@ -41,12 +41,8 @@ pub fn send_file_descriptors(
         write_rights_control_message(&mut message_header, file_descriptors)?;
     }
 
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - scm_rights_sends_and_receives_file_descriptor
+    // SAFETY: `message_header` points to live iovec and control-buffer storage until `sendmsg`
+    // returns, and argument validation rejected negative descriptors and empty payloads
     let result = unsafe { libc::sendmsg(socket_file_descriptor, &message_header, 0) };
     if result < 0 {
         return Err(warning_from_errno(
@@ -65,7 +61,7 @@ pub fn send_file_descriptors(
     })
 }
 
-/// Payload metadata
+/// Receives a payload and up to `max_file_descriptors` descriptors from a Unix socket
 pub fn receive_file_descriptors(
     socket_file_descriptor: RawFd,
     payload_buffer: &mut [u8],
@@ -80,12 +76,8 @@ pub fn receive_file_descriptors(
     let mut control_buffer = vec![0_u8; control_buffer_len(max_file_descriptors)?];
     let mut message_header = new_message_header(&mut io_vector, &mut control_buffer);
 
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - scm_rights_sends_and_receives_file_descriptor
+    // SAFETY: `message_header` points to live mutable payload and control buffers sized for the
+    // requested descriptor bound until `recvmsg` returns
     let result = unsafe { libc::recvmsg(socket_file_descriptor, &mut message_header, 0) };
     if result < 0 {
         return Err(warning_from_errno(
@@ -214,12 +206,8 @@ fn write_rights_control_message(
             )
         })?;
 
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - scm_rights_sends_and_receives_file_descriptor
+    // SAFETY: `message_header.msg_control` points to a writable control buffer created by
+    // `new_message_header`, and the buffer was sized with `CMSG_SPACE`
     let control_message = unsafe { libc::CMSG_FIRSTHDR(message_header) };
     if control_message.is_null() {
         return Err(Warning::new(
@@ -229,12 +217,8 @@ fn write_rights_control_message(
         ));
     }
 
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - scm_rights_sends_and_receives_file_descriptor
+    // SAFETY: `control_message` points inside the writable control buffer, `cmsg_len` is derived
+    // from the descriptor byte count, and the destination returned by `CMSG_DATA` has enough space
     unsafe {
         (*control_message).cmsg_level = libc::SOL_SOCKET;
         (*control_message).cmsg_type = libc::SCM_RIGHTS;
@@ -254,12 +238,8 @@ fn collect_rights_control_messages(
 ) -> RbusResult<Vec<OwnedFileDescriptor>> {
     let mut received_file_descriptors = Vec::new();
 
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - scm_rights_sends_and_receives_file_descriptor
+    // SAFETY: `message_header` is the initialized header returned by `recvmsg`; libc traversal
+    // functions only inspect the control buffer described by that header
     unsafe {
         let mut control_message = libc::CMSG_FIRSTHDR(message_header);
         while !control_message.is_null() {
@@ -283,12 +263,8 @@ unsafe fn append_file_descriptors_from_control_message(
     received_file_descriptors: &mut Vec<OwnedFileDescriptor>,
 ) -> RbusResult<()> {
     let header_len = cmsg_len(0);
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - scm_rights_sends_and_receives_file_descriptor
+    // SAFETY: The caller passes a non-null control-message pointer obtained from libc control
+    // message traversal
     let control_message_len = unsafe { (*control_message).cmsg_len };
     if control_message_len < header_len {
         return Err(Warning::new(
@@ -307,21 +283,13 @@ unsafe fn append_file_descriptors_from_control_message(
         ));
     }
     let descriptor_count = payload_len / core::mem::size_of::<RawFd>();
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - scm_rights_sends_and_receives_file_descriptor
+    // SAFETY: The header length was validated and the payload length is an exact multiple of
+    // `RawFd`, so `CMSG_DATA` points to `descriptor_count` descriptor values
     let descriptor_pointer = unsafe { libc::CMSG_DATA(control_message.cast_mut()).cast::<RawFd>() };
 
     for descriptor_index in 0..descriptor_count {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - scm_rights_sends_and_receives_file_descriptor
+        // SAFETY: `descriptor_index` is bounded by the descriptor count computed from the checked
+        // control-message payload length
         let raw_file_descriptor = unsafe { *descriptor_pointer.add(descriptor_index) };
         received_file_descriptors.push(OwnedFileDescriptor::new(raw_file_descriptor)?);
     }
@@ -330,21 +298,11 @@ unsafe fn append_file_descriptors_from_control_message(
 }
 
 fn cmsg_space(length: libc::c_uint) -> usize {
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - scm_rights_sends_and_receives_file_descriptor
+    // SAFETY: `CMSG_SPACE` is a pure libc size macro exposed as an unsafe function by bindings
     unsafe { libc::CMSG_SPACE(length) as usize }
 }
 
 fn cmsg_len(length: libc::c_uint) -> usize {
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // - Required invariant holds
-    // Covered by tests:
-    // - scm_rights_sends_and_receives_file_descriptor
+    // SAFETY: `CMSG_LEN` is a pure libc size macro exposed as an unsafe function by bindings
     unsafe { libc::CMSG_LEN(length) as usize }
 }

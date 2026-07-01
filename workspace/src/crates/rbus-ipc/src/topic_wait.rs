@@ -21,7 +21,7 @@ const TOPIC_WAIT_INITIAL_WAITER_MASK: u64 = 0;
 const TOPIC_WAIT_RESERVED_VALUE: u32 = 0;
 const COMPONENT_IPC: &str = "rbus-ipc";
 
-/// Topic runtime metadata
+/// Shared header used to wake subscribers for topic-level events
 #[repr(C, align(64))]
 pub struct TopicWaitHeader {
     magic: u64,
@@ -40,14 +40,14 @@ pub struct TopicWaitSegment {
 }
 
 // SAFETY: The header pointer is checked when the segment is mapped and stays valid because the
-// mapping is owned by TopicWaitSegment; all shared fields are atomic.
+// mapping is owned by TopicWaitSegment; all shared fields are atomic
 unsafe impl Send for TopicWaitSegment {}
 
-// SAFETY: Concurrent access to TopicWaitHeader uses atomics only.
+// SAFETY: Concurrent access to TopicWaitHeader uses atomics only
 unsafe impl Sync for TopicWaitSegment {}
 
 impl TopicWaitSegment {
-    /// Topic runtime metadata
+    /// Maps and validates a topic wait segment
     pub fn map(file_descriptor: &OwnedFileDescriptor) -> Result<Self, Warning> {
         let mapping = MappedRegion::map_shared(
             file_descriptor.as_raw_file_descriptor(),
@@ -63,46 +63,46 @@ impl TopicWaitSegment {
         })
     }
 
-    /// Topic wait segment ABI metadata
+    /// Returns the segment magic read from the mapped header
     pub fn magic(&self) -> u64 {
         self.header().magic
     }
 
-    /// Topic wait segment ABI metadata
+    /// Returns the segment ABI version read from the mapped header
     pub fn abi_version(&self) -> u32 {
         self.header().abi_version
     }
 
-    /// Returns a value
+    /// Returns the message wake epoch observed by subscribers
     pub fn wake_epoch(&self) -> u32 {
         self.header().wake_epoch.load(Ordering::Acquire)
     }
 
-    /// Stream runtime metadata
+    /// Returns the stream-list epoch observed by subscribers
     pub fn stream_epoch(&self) -> u32 {
         self.header().stream_epoch.load(Ordering::Acquire)
     }
 
-    /// Linux IPC metadata
+    /// Returns the futex word used for message wake waits
     pub fn wake_epoch_word(&self) -> &AtomicU32 {
         &self.header().wake_epoch
     }
 
-    /// Internal documentation
+    /// Adds a subscriber bit to the waiter mask
     pub fn add_waiter(&self, waiter_mask: u64) {
         self.header()
             .wake_waiters_mask
             .fetch_or(waiter_mask, Ordering::AcqRel);
     }
 
-    /// Internal documentation
+    /// Removes a subscriber bit from the waiter mask
     pub fn remove_waiter(&self, waiter_mask: u64) {
         self.header()
             .wake_waiters_mask
             .fetch_and(!waiter_mask, Ordering::AcqRel);
     }
 
-    /// Subscriber runtime metadata
+    /// Wakes subscribers currently present in the waiter mask
     pub fn wake_waiters(&self) -> Result<(), Warning> {
         let header = self.header();
         if header.wake_waiters_mask.load(Ordering::Acquire) == 0 {
@@ -114,19 +114,19 @@ impl TopicWaitSegment {
         Ok(())
     }
 
-    /// Subscriber runtime metadata
+    /// Bumps the stream-list epoch and wakes subscribers
     pub fn wake_stream_added(&self) -> Result<(), Warning> {
         self.header().stream_epoch.fetch_add(1, Ordering::Release);
         self.wake_waiters()
     }
 
     fn header(&self) -> &TopicWaitHeader {
-        // SAFETY: The header pointer was checked when this TopicWaitSegment was mapped.
+        // SAFETY: The header pointer was checked when this TopicWaitSegment was mapped
         unsafe { self.header.as_ref() }
     }
 }
 
-/// Topic runtime metadata
+/// Creates and initializes a topic wait segment for a topic hash
 pub fn create_topic_wait_segment(topic_hash: u64) -> Result<OwnedFileDescriptor, Warning> {
     let file_descriptor = create_memfd(
         &format!("rbus-topic-wait-{topic_hash}"),
@@ -147,7 +147,7 @@ fn initialize_topic_wait_segment(mapping: &MappedRegion) -> Result<(), Warning> 
         TOPIC_WAIT_HEADER_OFFSET,
         "initialize_topic_wait_segment",
     )?;
-    // SAFETY: The header pointer was checked against the newly created mapping.
+    // SAFETY: The header pointer was checked against the newly created mapping
     unsafe {
         core::ptr::write(
             header_pointer.as_ptr(),
@@ -166,7 +166,7 @@ fn initialize_topic_wait_segment(mapping: &MappedRegion) -> Result<(), Warning> 
 }
 
 fn validate_topic_wait_header(header_pointer: NonNull<TopicWaitHeader>) -> Result<(), Warning> {
-    // SAFETY: The pointer was bounds and alignment checked by MappedRegion::typed_pointer.
+    // SAFETY: The pointer was bounds and alignment checked by MappedRegion::typed_pointer
     let header = unsafe { header_pointer.as_ref() };
     if header.magic == TOPIC_WAIT_MAGIC && header.abi_version == TOPIC_WAIT_ABI_VERSION {
         Ok(())

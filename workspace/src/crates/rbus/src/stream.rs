@@ -49,7 +49,7 @@ impl StreamInner {
     ) -> Result<Arc<Self>, Warning> {
         let (mapping, layout) = map_stream_segment(file_descriptor, metadata, true)?;
         let memory = StreamMemory::new(&mapping, layout)?;
-        // SAFETY: StreamMemory::new checked the counters pointer before StreamInner creation.
+        // SAFETY: StreamMemory::new checked the counters pointer before StreamInner creation
         let published_messages = unsafe {
             memory
                 .counters
@@ -184,7 +184,7 @@ impl StreamInner {
         };
         let slot_pointer = self.slot_header_pointer(slot_index);
         // SAFETY: The slot was claimed by try_begin_loan, slot_index points inside the checked
-        // header range, and readers cannot observe this metadata before the release commit.
+        // header range, and readers cannot observe this metadata before the release commit
         unsafe {
             (*slot_pointer).len = length as u32;
             (*slot_pointer).flags = 0;
@@ -207,7 +207,7 @@ impl StreamInner {
     pub(crate) fn rollback_loan(&self, slot_index: usize) {
         let slot_pointer = self.slot_header_pointer(slot_index);
         // SAFETY: The slot was claimed by try_begin_loan and slot_index points inside the
-        // checked header range for this stream layout.
+        // checked header range for this stream layout
         unsafe {
             (*slot_pointer).len = 0;
         }
@@ -364,28 +364,28 @@ impl StreamInner {
     }
 
     fn segment_header(&self) -> &SegmentHeader {
-        // SAFETY: The pointer was checked once during StreamInner attach.
+        // SAFETY: The pointer was checked once during StreamInner attach
         unsafe { self.memory.header.as_ref() }
     }
 
     fn stream_counters(&self) -> &StreamCounters {
-        // SAFETY: The pointer was checked once during StreamInner attach.
+        // SAFETY: The pointer was checked once during StreamInner attach
         unsafe { self.memory.counters.as_ref() }
     }
 
     fn slot_header(&self, slot_index: usize) -> &SlotHeader {
-        // SAFETY: Callers derive slot_index from Sequence::slot_index or a bounded layout loop.
+        // SAFETY: Callers derive slot_index from Sequence::slot_index or a bounded layout loop
         unsafe { &*self.slot_header_pointer(slot_index) }
     }
 
     fn slot_header_pointer(&self, slot_index: usize) -> *mut SlotHeader {
-        // SAFETY: StreamMemory::new checked the full slot header range for this layout.
+        // SAFETY: StreamMemory::new checked the full slot header range for this layout
         unsafe { self.memory.slots.as_ptr().add(slot_index) }
     }
 
     fn payload_pointer(&self, slot_index: usize) -> *mut u8 {
         let payload_offset = slot_index * self.layout.payload_stride;
-        // SAFETY: StreamMemory::new checked the full payload range for this layout.
+        // SAFETY: StreamMemory::new checked the full payload range for this layout
         unsafe { self.memory.payload.as_ptr().add(payload_offset) }
     }
 }
@@ -419,11 +419,11 @@ struct StreamMemory {
 }
 
 // SAFETY: StreamMemory pointers are checked during attach, remain valid while StreamInner owns
-// the MappedRegion, and concurrent access is synchronized by the shared-memory atomics.
+// the MappedRegion, and concurrent access is synchronized by the shared-memory atomics
 unsafe impl Send for StreamMemory {}
 
 // SAFETY: StreamMemory exposes shared-memory metadata and payload pointers whose concurrent access
-// is governed by the slot protocol atomics, not by Rust references.
+// is governed by the slot protocol atomics, not by Rust references
 unsafe impl Sync for StreamMemory {}
 
 impl StreamMemory {

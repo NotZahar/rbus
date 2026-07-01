@@ -1,4 +1,4 @@
-//! Version and ABI metadata
+//! Re-exported ABI constants for layout consumers
 
 pub use crate::constants::{
     CACHE_LINE_BYTES, SHARED_MEMORY_ABI_VERSION, SHARED_MEMORY_MAGIC, STREAM_SEGMENT_ABI_VERSION,

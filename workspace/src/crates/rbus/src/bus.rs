@@ -1,4 +1,4 @@
-//! Domain handle rbus
+//! Domain handle used to create publishers and subscribers
 use std::path::PathBuf;
 
 use rbus_core::topic::{stable_topic_hash, validate_topic_name};
@@ -13,13 +13,13 @@ use crate::subscriber::Subscriber;
 
 const COMPONENT_RBUS: &str = "rbus";
 
-/// Internal documentation
+/// Connection handle for one rbus daemon domain
 pub struct Bus {
     socket_path: PathBuf,
 }
 
 impl Bus {
-    /// Daemon runtime metadata
+    /// Connects to a running daemon for `domain`
     pub fn connect(domain: &str) -> Result<Self, Warning> {
         if domain.is_empty() {
             return Err(Warning::new(
@@ -33,7 +33,7 @@ impl Bus {
         })
     }
 
-    /// Publisher runtime metadata
+    /// Registers a publisher for `topic` and creates its shared-memory stream
     pub fn publisher(&self, topic: &str, config: TopicConfig) -> Result<Publisher, Warning> {
         validate_topic_name(topic)?;
         config.validate_for_publisher()?;
@@ -58,7 +58,7 @@ impl Bus {
         )
     }
 
-    /// Subscriber runtime metadata
+    /// Registers a subscriber for `topic` and attaches existing streams
     pub fn subscriber(&self, topic: &str) -> Result<Subscriber, Warning> {
         validate_topic_name(topic)?;
         let topic_hash = stable_topic_hash(topic);

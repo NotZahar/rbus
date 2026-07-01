@@ -10,21 +10,21 @@ const SMAPS_PSS: &str = "Pss:";
 const SMAPS_RSS: &str = "Rss:";
 const BYTES_PER_KIB: u64 = 1024;
 
-/// Internal documentation
+/// Process resource counters sampled around a benchmark run
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ProcessSystemSnapshot {
-    /// Internal documentation
+    /// Process CPU time in nanoseconds
     pub cpu_time_ns: u64,
-    /// Internal documentation
+    /// Voluntary plus non-voluntary context switches
     pub context_switches: u64,
-    /// Internal documentation
+    /// Resident set size in bytes
     pub rss_bytes: u64,
-    /// Internal documentation
+    /// Proportional set size in bytes
     pub pss_bytes: u64,
 }
 
 impl ProcessSystemSnapshot {
-    /// Internal documentation
+    /// Captures current process CPU, context-switch and memory counters
     pub fn capture() -> Result<Self, Warning> {
         Ok(Self {
             cpu_time_ns: process_cpu_time_ns()?,
@@ -34,7 +34,7 @@ impl ProcessSystemSnapshot {
         })
     }
 
-    /// Returns a value
+    /// Returns the delta from an earlier snapshot
     pub fn delta(self, start: Self) -> Self {
         Self {
             cpu_time_ns: self.cpu_time_ns.saturating_sub(start.cpu_time_ns),
@@ -45,7 +45,7 @@ impl ProcessSystemSnapshot {
     }
 }
 
-/// Returns a value
+/// Returns monotonic wall-clock time in nanoseconds
 pub fn monotonic_time_ns() -> Result<u64, Warning> {
     clock_time_ns(libc::CLOCK_MONOTONIC, "monotonic_time_ns")
 }
@@ -59,7 +59,7 @@ fn clock_time_ns(clock_id: libc::clockid_t, operation: &'static str) -> Result<u
         tv_sec: 0,
         tv_nsec: 0,
     };
-    // SAFETY: Required invariants are upheld
+    // SAFETY: `timespec` points to a valid stack allocation that `clock_gettime` may fill
     let result = unsafe { libc::clock_gettime(clock_id, &mut timespec) };
     if result != 0 {
         return Err(warning_from_errno(operation));

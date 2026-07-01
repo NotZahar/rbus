@@ -95,7 +95,7 @@ impl SubscriberStreams {
             return Ok(SubscriberStreamRead::NotSingleStream);
         };
         // SAFETY: SubscriberStreams keeps the StreamInner Arc in `streams` while the
-        // single-stream pointer is enabled. Attached streams are never removed from this set.
+        // single-stream pointer is enabled. Attached streams are never removed from this set
         let stream = unsafe { stream_pointer.as_ref() };
         match stream.try_read_message(self.single_stream_cursor.get(), subscriber_id)? {
             ReadAttempt::Empty => Ok(SubscriberStreamRead::Empty),
@@ -172,7 +172,7 @@ impl SubscriberStreams {
 
     pub(crate) fn has_waitable_progress(&self) -> Result<bool, Warning> {
         if let Some(stream_pointer) = self.single_stream_pointer.get() {
-            // SAFETY: The enabled single-stream pointer is backed by an Arc kept in `streams`.
+            // SAFETY: The enabled single-stream pointer is backed by an Arc kept in `streams`
             let stream = unsafe { stream_pointer.as_ref() };
             return Ok(stream.current_write_sequence() > self.single_stream_cursor.get());
         }

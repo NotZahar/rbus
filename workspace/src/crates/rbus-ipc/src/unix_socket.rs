@@ -22,19 +22,19 @@ const UNIX_SOCKET_LISTEN_BACKLOG: libc::c_int = 128;
 const UNIX_SOCKET_PATH_TERMINATOR_LENGTH: usize = 1;
 const UNIX_SOCKET_PROTOCOL_DEFAULT: libc::c_int = 0;
 
-/// Linux IPC metadata
+/// Returns the default daemon socket path for a domain
 pub fn default_socket_path(domain: &str) -> PathBuf {
     runtime_directory_path()
         .join("rbus")
         .join(format!("{domain}.sock"))
 }
 
-/// Returns a value
+/// Returns the per-user runtime directory used for sockets
 pub fn runtime_directory_path() -> PathBuf {
     PathBuf::from(format!("/run/user/{}", effective_user_id()))
 }
 
-/// Linux IPC metadata
+/// Binds a `SOCK_SEQPACKET` Unix listener at `socket_path`
 pub fn bind_unix_listener(socket_path: &Path) -> Result<UnixListener, Warning> {
     let parent = socket_path.parent().ok_or_else(|| {
         Warning::new(
@@ -51,7 +51,7 @@ pub fn bind_unix_listener(socket_path: &Path) -> Result<UnixListener, Warning> {
     let _removed_count = cleanup_stale_unix_socket(socket_path)?;
     let file_descriptor = create_seqpacket_socket("bind_unix_listener::socket")?;
     let socket_address = UnixSocketAddress::new(socket_path, "bind_unix_listener::path")?;
-    // SAFETY: file_descriptor is a valid AF_UNIX socket and socket_address points to a live sockaddr_un.
+    // SAFETY: file_descriptor is a valid AF_UNIX socket and socket_address points to a live sockaddr_un
     let bind_result = unsafe {
         libc::bind(
             file_descriptor.as_raw_file_descriptor(),
@@ -66,7 +66,7 @@ pub fn bind_unix_listener(socket_path: &Path) -> Result<UnixListener, Warning> {
             "bind_unix_listener::bind",
         ));
     }
-    // SAFETY: file_descriptor is a bound AF_UNIX SOCK_SEQPACKET socket.
+    // SAFETY: file_descriptor is a bound AF_UNIX SOCK_SEQPACKET socket
     let listen_result = unsafe {
         libc::listen(
             file_descriptor.as_raw_file_descriptor(),
@@ -80,11 +80,11 @@ pub fn bind_unix_listener(socket_path: &Path) -> Result<UnixListener, Warning> {
             "bind_unix_listener::listen",
         ));
     }
-    // SAFETY: ownership of the listening socket descriptor moves into UnixListener.
+    // SAFETY: ownership of the listening socket descriptor moves into UnixListener
     Ok(unsafe { UnixListener::from_raw_fd(file_descriptor.into_raw_file_descriptor()) })
 }
 
-/// Daemon runtime metadata
+/// Removes a stale socket pathname when no daemon is accepting on it
 pub fn cleanup_stale_unix_socket(socket_path: &Path) -> Result<u64, Warning> {
     if !socket_path.exists() {
         return Ok(NO_REMOVED_SOCKET_COUNT);
@@ -101,11 +101,11 @@ pub fn cleanup_stale_unix_socket(socket_path: &Path) -> Result<u64, Warning> {
     }
 }
 
-/// Daemon runtime metadata
+/// Connects to an existing daemon Unix socket
 pub fn connect_unix_stream(socket_path: &Path) -> Result<UnixStream, Warning> {
     let file_descriptor = create_seqpacket_socket("connect_unix_stream::socket")?;
     let socket_address = UnixSocketAddress::new(socket_path, "connect_unix_stream::path")?;
-    // SAFETY: file_descriptor is a valid AF_UNIX socket and socket_address points to a live sockaddr_un.
+    // SAFETY: file_descriptor is a valid AF_UNIX socket and socket_address points to a live sockaddr_un
     let connect_result = unsafe {
         libc::connect(
             file_descriptor.as_raw_file_descriptor(),
@@ -120,7 +120,7 @@ pub fn connect_unix_stream(socket_path: &Path) -> Result<UnixStream, Warning> {
             "connect_unix_stream::connect",
         ));
     }
-    // SAFETY: ownership of the connected socket descriptor moves into UnixStream.
+    // SAFETY: ownership of the connected socket descriptor moves into UnixStream
     Ok(unsafe { UnixStream::from_raw_fd(file_descriptor.into_raw_file_descriptor()) })
 }
 
@@ -143,12 +143,12 @@ fn is_stale_socket_warning(warning: &Warning) -> bool {
 }
 
 fn effective_user_id() -> libc::uid_t {
-    // SAFETY: Required invariants are upheld
+    // SAFETY: `geteuid` has no pointer arguments and returns the effective user id
     unsafe { libc::geteuid() }
 }
 
 fn create_seqpacket_socket(operation: &'static str) -> Result<OwnedFileDescriptor, Warning> {
-    // SAFETY: socket is called with constant AF_UNIX/SOCK_SEQPACKET parameters.
+    // SAFETY: socket is called with constant AF_UNIX/SOCK_SEQPACKET parameters
     let raw_file_descriptor = unsafe {
         libc::socket(
             libc::AF_UNIX,
@@ -187,7 +187,7 @@ impl UnixSocketAddress {
             ));
         }
 
-        // SAFETY: zeroed sockaddr_un is initialized below before syscall use.
+        // SAFETY: zeroed sockaddr_un is initialized below before syscall use
         let mut address = unsafe { core::mem::zeroed::<libc::sockaddr_un>() };
         address.sun_family = libc::sa_family_t::try_from(libc::AF_UNIX).map_err(|_| {
             Warning::new(

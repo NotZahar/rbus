@@ -1,4 +1,4 @@
-//! Internal documentation
+//! Zero-copy publisher loaned-message API
 
 use rbus_core::Sequence;
 use rbus_core::warning::Warning;
@@ -6,7 +6,7 @@ use rbus_core::warning::Warning;
 use crate::publisher::Publisher;
 use crate::stream::LoanReservation;
 
-/// Stream runtime metadata
+/// Writable message loan that must be published or rolled back on drop
 pub struct LoanedMessage<'publisher> {
     pub(crate) publisher: &'publisher mut Publisher,
     pub(crate) slot_index: usize,
@@ -31,10 +31,10 @@ impl<'publisher> LoanedMessage<'publisher> {
         }
     }
 
-    /// Payload metadata
+    /// Returns the writable payload buffer for this loan
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         // SAFETY: LoanReservation points into a claimed slot, length was validated against the
-        // slot size, and the &mut Publisher borrow prevents another loan from aliasing it.
+        // slot size, and the &mut Publisher borrow prevents another loan from aliasing it
         unsafe { core::slice::from_raw_parts_mut(self.payload_pointer, self.length) }
     }
 
@@ -42,7 +42,7 @@ impl<'publisher> LoanedMessage<'publisher> {
         self.published = true;
     }
 
-    /// Commits this loaned message to the publisher stream it came from.
+    /// Commits this loaned message to the publisher stream it came from
     ///
     /// ```compile_fail
     /// use rbus::{Bus, TopicConfig};

@@ -1,4 +1,4 @@
-//! Core ids, layouts, versions and warning metadata
+//! Core ids, layouts, versions and warning types shared by rbus crates
 
 pub mod atomic;
 pub mod cache;

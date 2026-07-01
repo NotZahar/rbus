@@ -4,7 +4,7 @@ use std::path::Path;
 
 use rbus_core::warning::{Warning, WarningCode};
 
-/// Linux IPC metadata
+/// Creates a private runtime directory for daemon-owned IPC files
 pub fn ensure_private_directory(path: &Path) -> Result<(), Warning> {
     fs::create_dir_all(path).map_err(|error| {
         Warning::new(

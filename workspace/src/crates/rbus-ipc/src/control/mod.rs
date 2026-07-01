@@ -1,4 +1,4 @@
-//! Control protocol metadata
+//! Control protocol frame types, codecs and request helpers
 
 pub mod client;
 pub mod codec;

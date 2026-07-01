@@ -1,9 +1,9 @@
-/// Benchmark metadata
+/// Scenario shape used by the benchmark runner
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ScenarioKind {
     /// One-way publish/receive
     OneWay,
-    /// Warning model metadata
+    /// Scenario that intentionally creates subscriber lag
     SlowSubscriber,
 }
 
@@ -41,10 +41,10 @@ const ONE_PUBLISHER_FOUR_SUBSCRIBERS: Topology = Topology {
     kind: ScenarioKind::OneWay,
 };
 
-/// Benchmark metadata
+/// Default saturated benchmark topologies
 pub const TOPOLOGIES: &[Topology] = &[FOUR_PUBLISHERS_EIGHT_SUBSCRIBERS];
 
-/// Benchmark metadata
+/// Topologies used by paced benchmark runs
 pub const PACED_TOPOLOGIES: &[Topology] = &[
     ONE_PUBLISHER_ONE_SUBSCRIBER,
     ONE_PUBLISHER_FOUR_SUBSCRIBERS,

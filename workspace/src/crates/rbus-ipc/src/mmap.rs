@@ -1,4 +1,4 @@
-//! Linux IPC metadata
+//! Shared memory mapping helpers
 
 use core::mem::{align_of, size_of};
 use core::ptr::NonNull;
@@ -20,7 +20,7 @@ pub struct MappedRegion {
 }
 
 impl MappedRegion {
-    /// Linux IPC metadata
+    /// Maps a descriptor as a shared memory region
     pub fn map_shared(
         raw_file_descriptor: RawFd,
         length: usize,
@@ -40,12 +40,8 @@ impl MappedRegion {
             libc::PROT_READ
         };
 
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - mmap_region_allows_shared_read_write
+        // SAFETY: The descriptor and non-zero length are validated above; the null address lets
+        // the kernel choose the mapping address, and offset 0 is page-aligned
         let raw_pointer = unsafe {
             libc::mmap(
                 core::ptr::null_mut(),
@@ -79,12 +75,12 @@ impl MappedRegion {
         Ok(Self { pointer, length })
     }
 
-    /// Returns a value
+    /// Returns the mapped byte length
     pub const fn length(&self) -> usize {
         self.length
     }
 
-    /// Linux IPC metadata
+    /// Returns an aligned typed pointer into the mapped region
     pub fn typed_pointer<T>(
         &self,
         offset: usize,
@@ -104,7 +100,7 @@ impl MappedRegion {
             })
     }
 
-    /// Linux IPC metadata
+    /// Returns a byte pointer to a checked range inside the mapping
     pub fn byte_pointer(
         &self,
         offset: usize,
@@ -130,44 +126,33 @@ impl MappedRegion {
         })
     }
 
-    /// Returns a value
+    /// Borrows the entire mapping as immutable bytes
     pub fn as_slice(&self) -> &[u8] {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - mmap_region_allows_shared_read_write
+        // SAFETY: `pointer` and `length` come from a successful `mmap` and remain valid while
+        // `self` owns the mapping
         unsafe { core::slice::from_raw_parts(self.pointer.as_ptr(), self.length) }
     }
 
-    /// Returns a value
+    /// Borrows the entire mapping as mutable bytes
     pub fn as_mutable_slice(&mut self) -> &mut [u8] {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - mmap_region_allows_shared_read_write
+        // SAFETY: `&mut self` guarantees a unique Rust borrow of this mapping wrapper; the
+        // pointer and length come from a successful writable `mmap`
         unsafe { core::slice::from_raw_parts_mut(self.pointer.as_ptr(), self.length) }
     }
 }
 
 impl Drop for MappedRegion {
     fn drop(&mut self) {
-        // SAFETY: Required invariants are upheld
-        // Invariants:
-        // - Required invariant holds
-        // - Required invariant holds
-        // Covered by tests:
-        // - mmap_region_allows_shared_read_write
+        // SAFETY: The pointer and length are exactly the region returned by `mmap`, and `Drop`
+        // runs once for the owner of this mapping
         unsafe {
             libc::munmap(self.pointer.as_ptr().cast(), self.length);
         }
     }
 }
 
-// SAFETY: Required invariants are upheld
+// SAFETY: The wrapper owns an OS mapping; moving it to another thread does not invalidate it
 unsafe impl Send for MappedRegion {}
-// SAFETY: Required invariants are upheld
+// SAFETY: Shared access to the mapping is allowed; data synchronization is handled by callers and
+// the shared-memory atomic protocol
 unsafe impl Sync for MappedRegion {}

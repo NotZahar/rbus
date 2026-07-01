@@ -1,4 +1,4 @@
-//! Control protocol metadata
+//! Typed payloads for core control protocol commands
 
 use rbus_core::warning::{Warning, WarningCode};
 
@@ -9,9 +9,9 @@ const NOTIFY_STREAM_ADDED_HEADER_WORDS: usize = 2;
 const STREAM_ATTACHMENT_WORDS: usize = 6;
 const UNREGISTER_ENTITY_PUBLISHER: u64 = 1;
 const UNREGISTER_ENTITY_SUBSCRIBER: u64 = 2;
-/// Internal documentation
+/// Immediate `NOTIFY_STREAM_ADDED` poll without blocking
 pub const NOTIFY_STREAM_ADDED_NO_WAIT_NS: u64 = 0;
-/// Internal documentation
+/// `NOTIFY_STREAM_ADDED` wait with no timeout
 pub const NOTIFY_STREAM_ADDED_INFINITE_WAIT_NS: u64 = u64::MAX;
 
 /// REGISTER_PUBLISHER request
@@ -29,7 +29,7 @@ impl RegisterPublisherRequest {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES * 3;
 
-    /// Control request metadata
+    /// Encodes this request payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         let mut output = [0_u8; Self::ENCODED_SIZE];
         write_u64(&mut output, 0, self.topic_hash);
@@ -38,7 +38,7 @@ impl RegisterPublisherRequest {
         output
     }
 
-    /// Control request metadata
+    /// Decodes this request payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(
             input,
@@ -62,13 +62,13 @@ pub struct RegisterPublisherResponse {
     pub stream_id: u64,
     /// Daemon registry generation where stream was created
     pub stream_generation: u64,
-    /// Internal documentation
+    /// Total byte length of the stream segment
     pub segment_size: u64,
-    /// Payload metadata
+    /// Maximum payload bytes stored in each slot
     pub slot_size: u64,
     /// Ring depth
     pub depth: u64,
-    /// Subscriber runtime metadata
+    /// Number of subscribers already registered for this topic
     pub subscriber_count: u64,
 }
 
@@ -76,7 +76,7 @@ impl RegisterPublisherResponse {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES * 7;
 
-    /// Control response metadata
+    /// Encodes this response payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         let mut output = [0_u8; Self::ENCODED_SIZE];
         write_u64(&mut output, 0, self.publisher_id);
@@ -89,7 +89,7 @@ impl RegisterPublisherResponse {
         output
     }
 
-    /// Control response metadata
+    /// Decodes this response payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(
             input,
@@ -119,12 +119,12 @@ impl RegisterSubscriberRequest {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES;
 
-    /// Control request metadata
+    /// Encodes this request payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         self.topic_hash.to_le_bytes()
     }
 
-    /// Control request metadata
+    /// Decodes this request payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(
             input,
@@ -150,7 +150,7 @@ impl RegisterSubscriberResponse {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES * 2;
 
-    /// Control response metadata
+    /// Encodes this response payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         let mut output = [0_u8; Self::ENCODED_SIZE];
         write_u64(&mut output, 0, self.subscriber_id);
@@ -158,7 +158,7 @@ impl RegisterSubscriberResponse {
         output
     }
 
-    /// Control response metadata
+    /// Decodes this response payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(
             input,
@@ -183,12 +183,12 @@ impl AttachStreamsRequest {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES;
 
-    /// Control request metadata
+    /// Encodes this request payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         self.topic_hash.to_le_bytes()
     }
 
-    /// Control request metadata
+    /// Decodes this request payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(input, Self::ENCODED_SIZE, "AttachStreamsRequest::decode")?;
         Ok(Self {
@@ -197,7 +197,7 @@ impl AttachStreamsRequest {
     }
 }
 
-/// Stream runtime metadata
+/// Stream descriptor metadata sent together with a memfd
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StreamAttachment {
     /// Publisher id
@@ -206,9 +206,9 @@ pub struct StreamAttachment {
     pub stream_id: u64,
     /// Daemon registry generation where stream was created
     pub stream_generation: u64,
-    /// Internal documentation
+    /// Total byte length of the stream segment
     pub segment_size: u64,
-    /// Payload metadata
+    /// Maximum payload bytes stored in each slot
     pub slot_size: u64,
     /// Ring depth
     pub depth: u64,
@@ -241,12 +241,12 @@ impl StreamAttachment {
 /// ATTACH_STREAMS response
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttachStreamsResponse {
-    /// Stream runtime metadata
+    /// Streams matching the requested topic
     pub streams: Vec<StreamAttachment>,
 }
 
 impl AttachStreamsResponse {
-    /// Control response metadata
+    /// Encodes this variable-length response payload
     pub fn encode(&self) -> Result<Vec<u8>, Warning> {
         let payload_length = U64_BYTES
             .checked_add(
@@ -279,7 +279,7 @@ impl AttachStreamsResponse {
         Ok(output)
     }
 
-    /// Control response metadata
+    /// Decodes this variable-length response payload
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         if input.len() < U64_BYTES {
             return Err(Warning::new(
@@ -333,9 +333,9 @@ pub struct NotifyStreamAddedRequest {
     pub topic_hash: u64,
     /// Daemon-issued subscriber id
     pub subscriber_id: u64,
-    /// Subscriber runtime metadata
+    /// Registry generation the subscriber has already observed
     pub since_generation: u64,
-    /// Stream runtime metadata
+    /// Maximum time to wait for newer streams, in nanoseconds
     pub wait_timeout_ns: u64,
 }
 
@@ -343,7 +343,7 @@ impl NotifyStreamAddedRequest {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES * 4;
 
-    /// Control request metadata
+    /// Encodes this request payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         let mut output = [0_u8; Self::ENCODED_SIZE];
         write_u64(&mut output, 0, self.topic_hash);
@@ -353,7 +353,7 @@ impl NotifyStreamAddedRequest {
         output
     }
 
-    /// Control request metadata
+    /// Decodes this request payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(
             input,
@@ -372,14 +372,14 @@ impl NotifyStreamAddedRequest {
 /// NOTIFY_STREAM_ADDED response
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct NotifyStreamAddedResponse {
-    /// Daemon runtime metadata
+    /// Latest registry generation known to the daemon
     pub latest_generation: u64,
-    /// Stream runtime metadata
+    /// Streams created after the requested generation
     pub streams: Vec<StreamAttachment>,
 }
 
 impl NotifyStreamAddedResponse {
-    /// Control response metadata
+    /// Encodes this variable-length response payload
     pub fn encode(&self) -> Result<Vec<u8>, Warning> {
         let payload_length = U64_BYTES
             .checked_mul(NOTIFY_STREAM_ADDED_HEADER_WORDS)
@@ -408,7 +408,7 @@ impl NotifyStreamAddedResponse {
         Ok(output)
     }
 
-    /// Control response metadata
+    /// Decodes this variable-length response payload
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         if input.len() < U64_BYTES * NOTIFY_STREAM_ADDED_HEADER_WORDS {
             return Err(Warning::new(
@@ -457,10 +457,10 @@ impl NotifyStreamAddedResponse {
     }
 }
 
-/// Internal documentation
+/// Entity kind targeted by an `UNREGISTER` request
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnregisterTargetKind {
-    /// Publisher runtime metadata
+    /// Publisher session id
     Publisher,
     /// Subscriber id
     Subscriber,
@@ -496,7 +496,7 @@ impl TryFrom<u64> for UnregisterTargetKind {
 pub struct UnregisterRequest {
     /// Target kind
     pub target_kind: UnregisterTargetKind,
-    /// Publisher runtime metadata
+    /// Publisher or subscriber id selected by `target_kind`
     pub target_id: u64,
 }
 
@@ -504,7 +504,7 @@ impl UnregisterRequest {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES * 2;
 
-    /// Control request metadata
+    /// Encodes this request payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         let mut output = [0_u8; Self::ENCODED_SIZE];
         write_u64(&mut output, 0, self.target_kind.as_u64());
@@ -512,7 +512,7 @@ impl UnregisterRequest {
         output
     }
 
-    /// Control request metadata
+    /// Decodes this request payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(input, Self::ENCODED_SIZE, "UnregisterRequest::decode")?;
         Ok(Self {
@@ -525,9 +525,9 @@ impl UnregisterRequest {
 /// UNREGISTER response
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct UnregisterResponse {
-    /// Internal documentation
+    /// Number of registry entries removed
     pub removed_count: u64,
-    /// Internal documentation
+    /// Registry generation after unregister handling
     pub registry_generation: u64,
 }
 
@@ -535,7 +535,7 @@ impl UnregisterResponse {
     /// Encoded payload size
     pub const ENCODED_SIZE: usize = U64_BYTES * 2;
 
-    /// Control response metadata
+    /// Encodes this response payload in little-endian wire format
     pub fn encode(self) -> [u8; Self::ENCODED_SIZE] {
         let mut output = [0_u8; Self::ENCODED_SIZE];
         write_u64(&mut output, 0, self.removed_count);
@@ -543,7 +543,7 @@ impl UnregisterResponse {
         output
     }
 
-    /// Control response metadata
+    /// Decodes this response payload from little-endian wire format
     pub fn decode(input: &[u8]) -> Result<Self, Warning> {
         expect_len(input, Self::ENCODED_SIZE, "UnregisterResponse::decode")?;
         Ok(Self {

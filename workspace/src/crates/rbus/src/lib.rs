@@ -1,4 +1,4 @@
-//! Internal documentation
+//! Public Rust API for the local rbus message bus
 
 mod bus;
 mod config;

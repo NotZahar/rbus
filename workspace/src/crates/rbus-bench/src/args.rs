@@ -17,65 +17,65 @@ const DEFAULT_RUNS_PER_SCENARIO: u32 = 1;
 const SUPPORTED_PACED_RATE_HZ: f64 = 30.0;
 const RATE_HZ_COMPARISON_EPSILON: f64 = 0.000_001;
 
-/// Benchmark metadata
+/// Parsed benchmark command-line arguments
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct BenchArguments {
-    /// Internal documentation
+    /// Selected benchmark mode
     pub mode: BenchMode,
 }
 
-/// Benchmark metadata
+/// Options used by smoke and suite modes
 #[derive(Clone, Debug, PartialEq)]
 pub struct SuiteOptions {
     /// Formats output
     pub output_format: OutputFormat,
-    /// Publisher runtime metadata
+    /// Messages each publisher should send
     pub messages_per_publisher: u32,
-    /// CLI metadata
+    /// Whether `--messages` was explicitly provided
     pub messages_explicit: bool,
-    /// Benchmark metadata
+    /// Load generation mode
     pub load_mode: LoadMode,
-    /// Publisher runtime metadata
+    /// Optional configured publish rate
     pub rate_hz: Option<f64>,
-    /// Publisher runtime metadata
+    /// Scope used to apply `rate_hz`
     pub rate_scope: RateScope,
-    /// Benchmark metadata
+    /// Optional run duration in milliseconds
     pub duration_ms: Option<u64>,
-    /// Benchmark metadata
+    /// Busy-spin tail before paced deadlines
     pub pace_spin_tail_us: u64,
-    /// Benchmark metadata
+    /// Optional scenario name filter
     pub scenario_filter: Option<String>,
-    /// Benchmark metadata
+    /// Optional wait mode filter
     pub wait_mode_filter: Option<WaitMode>,
-    /// Benchmark metadata
+    /// Optional transport filter
     pub transport_filter: Option<TransportKind>,
-    /// Payload metadata
+    /// Optional payload size filter
     pub payload_size_filter: Option<usize>,
-    /// Benchmark metadata
+    /// Repetitions per matrix row
     pub runs_per_scenario: u32,
     /// Baseline CSV path
     pub baseline_path: PathBuf,
-    /// Internal documentation
+    /// Whether regression gate checks are enabled
     pub gate_enabled: bool,
-    /// Payload metadata
+    /// Whether smoke mode should exercise the matrix
     pub matrix_smoke: bool,
 }
 
-/// Benchmark metadata
+/// Top-level benchmark execution mode
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum BenchMode {
-    /// Internal documentation
+    /// No mode was selected
     #[default]
     Missing,
-    /// CLI metadata
+    /// Print help text
     Help,
     /// Smoke mode
     Smoke(SuiteOptions),
-    /// Benchmark metadata
+    /// Run the full benchmark suite
     Suite(SuiteOptions),
-    /// Internal documentation
+    /// Run a marker-based syscall probe for one hot-path operation
     HotPathSyscallProbe(HotPathOperation),
-    /// Benchmark metadata
+    /// Run an internal suite worker process
     SuiteWorker(WorkerArguments),
 }
 
@@ -103,7 +103,7 @@ impl Default for SuiteOptions {
 }
 
 impl BenchArguments {
-    /// Benchmark metadata
+    /// Parses benchmark CLI arguments from an iterator
     pub fn parse<I>(arguments: I) -> Result<Self, Warning>
     where
         I: IntoIterator<Item = String>,

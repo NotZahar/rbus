@@ -89,7 +89,7 @@ fn message_reservations_do_not_clone_stream_arc() -> Result<(), Warning> {
         };
     assert_eq!(Arc::strong_count(&stream), initial_strong_count);
 
-    // SAFETY: The test stream Arc is still alive and owns the mapped StreamInner.
+    // SAFETY: The test stream Arc is still alive and owns the mapped StreamInner
     let stream_reference = unsafe { read_reservation.stream.as_ref() };
     stream_reference.unpin_reader(read_reservation.slot_index, read_reservation.reader_bit);
     assert_eq!(Arc::strong_count(&stream), initial_strong_count);

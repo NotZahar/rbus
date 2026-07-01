@@ -38,7 +38,7 @@ pub struct WarningSample {
     pub disconnected_streams: u64,
 }
 
-/// Warning model metadata
+/// Collects aggregate warning counters across registered streams
 pub fn warning_report(registry: &DaemonRegistry) -> Result<WarningReport, Warning> {
     let mut report = WarningReport::default();
     for topic_entry in registry.topics.values() {
@@ -66,7 +66,7 @@ pub fn warning_report(registry: &DaemonRegistry) -> Result<WarningReport, Warnin
     Ok(report)
 }
 
-/// Warning model metadata
+/// Formats a warning report as text or JSON
 pub fn format_warning_report(domain: &str, report: &WarningReport, json: bool) -> String {
     if json {
         warning_report_json(domain, report)

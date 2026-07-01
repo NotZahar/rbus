@@ -5,7 +5,7 @@ use rbus_ipc::stream_segment::snapshot_stream_segment;
 
 use crate::registry::DaemonRegistry;
 
-/// Payload metadata
+/// Formats registry and stream details for inspection
 pub fn inspect_domain(
     registry: &DaemonRegistry,
     domain: &str,

@@ -4,7 +4,7 @@ use crate::transports::{
     unix_socket_end_to_end,
 };
 
-/// Benchmark metadata
+/// Transport implementation selected for a benchmark row
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TransportKind {
     /// Zero-copy loaned metadata path
@@ -19,7 +19,7 @@ pub enum TransportKind {
     UnixSocketEndToEnd,
 }
 
-/// Benchmark metadata
+/// Transports covered by the full suite matrix
 pub const SUITE_TRANSPORTS: &[TransportKind] = &[
     TransportKind::RbusLoanedMetadataOnly,
     TransportKind::RbusLoanedFill,
@@ -28,7 +28,7 @@ pub const SUITE_TRANSPORTS: &[TransportKind] = &[
     TransportKind::UnixSocketEndToEnd,
 ];
 
-/// Benchmark metadata
+/// Transports covered by paced benchmark runs
 pub const PACED_TRANSPORTS: &[TransportKind] = &[
     TransportKind::RbusLoanedMetadataOnly,
     TransportKind::RbusLoanedFill,
@@ -37,7 +37,7 @@ pub const PACED_TRANSPORTS: &[TransportKind] = &[
 ];
 
 impl TransportKind {
-    /// Benchmark metadata
+    /// Parses a transport CLI/report value
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             rbus_loaned_metadata_only::TRANSPORT_NAME => Some(Self::RbusLoanedMetadataOnly),
@@ -49,7 +49,7 @@ impl TransportKind {
         }
     }
 
-    /// Benchmark metadata
+    /// Returns the CLI/report string for this transport
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::RbusLoanedMetadataOnly => rbus_loaned_metadata_only::TRANSPORT_NAME,
@@ -60,7 +60,7 @@ impl TransportKind {
         }
     }
 
-    /// Benchmark metadata
+    /// Returns whether this transport uses rbus shared-memory data plane
     pub const fn is_rbus(self) -> bool {
         matches!(
             self,
@@ -68,7 +68,7 @@ impl TransportKind {
         )
     }
 
-    /// Benchmark metadata
+    /// Returns whether this transport supports a scenario kind
     pub const fn supports_scenario(self, scenario_kind: ScenarioKind) -> bool {
         match scenario_kind {
             ScenarioKind::OneWay | ScenarioKind::SlowSubscriber => true,

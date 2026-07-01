@@ -6,25 +6,18 @@ use crate::fd::OwnedFileDescriptor;
 
 const COMPONENT_IPC: &str = "rbus-ipc";
 
-/// Linux IPC metadata
+/// Creates a non-blocking eventfd used for wake notifications
 pub fn create_eventfd() -> Result<OwnedFileDescriptor, Warning> {
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // Covered by tests:
-    // - eventfd_create_returns_descriptor
+    // SAFETY: `eventfd` is called with constant flags and an initial counter value of zero
     let raw_file_descriptor = unsafe { libc::eventfd(0, libc::EFD_CLOEXEC | libc::EFD_NONBLOCK) };
     OwnedFileDescriptor::new(raw_file_descriptor)
 }
 
-/// Linux IPC metadata
+/// Writes one wake token to an eventfd
 pub fn wake_eventfd(file_descriptor: &OwnedFileDescriptor) -> Result<(), Warning> {
     let value: u64 = 1;
-    // SAFETY: Required invariants are upheld
-    // Invariants:
-    // - Required invariant holds
-    // Covered by tests:
-    // - eventfd_create_returns_descriptor
+    // SAFETY: `value` is a live 8-byte buffer as required by eventfd writes, and the descriptor is
+    // owned by `file_descriptor`
     let result = unsafe {
         libc::write(
             file_descriptor.as_raw_file_descriptor(),

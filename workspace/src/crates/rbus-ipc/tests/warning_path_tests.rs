@@ -123,7 +123,7 @@ fn unique_temp_path(label: &str) -> PathBuf {
 
 fn write_pipe_byte(file_descriptor: RawFd) -> isize {
     let buffer = [TEST_PIPE_BYTE];
-    // SAFETY: The descriptor is owned by Pipe and the buffer is valid for PIPE_BYTE_COUNT bytes.
+    // SAFETY: The descriptor is owned by Pipe and the buffer is valid for PIPE_BYTE_COUNT bytes
     unsafe {
         libc::write(
             file_descriptor,
@@ -140,7 +140,7 @@ struct Pipe {
 impl Pipe {
     fn new() -> Self {
         let mut file_descriptors = [INVALID_FILE_DESCRIPTOR; PIPE_FD_COUNT];
-        // SAFETY: pipe writes exactly two file descriptors into the provided array on success.
+        // SAFETY: pipe writes exactly two file descriptors into the provided array on success
         let result = unsafe { libc::pipe(file_descriptors.as_mut_ptr()) };
         assert_eq!(result, SUCCESS_RETURN_CODE, "pipe should be created");
         Self { file_descriptors }
@@ -151,7 +151,7 @@ impl Drop for Pipe {
     fn drop(&mut self) {
         for file_descriptor in self.file_descriptors {
             if file_descriptor >= 0 {
-                // SAFETY: Each descriptor is created by pipe and closed exactly once in Drop.
+                // SAFETY: Each descriptor is created by pipe and closed exactly once in Drop
                 unsafe {
                     libc::close(file_descriptor);
                 }

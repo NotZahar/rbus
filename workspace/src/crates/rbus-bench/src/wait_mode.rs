@@ -1,7 +1,7 @@
-/// Subscriber runtime metadata
+/// Subscriber wait strategy used by benchmark workers
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WaitMode {
-    /// Internal documentation
+    /// Poll `try_recv` without blocking
     BusyPoll,
     /// Blocking `recv`
     Recv,
@@ -9,11 +9,11 @@ pub enum WaitMode {
     RecvTimeout,
 }
 
-/// Benchmark metadata
+/// Wait modes covered by the default benchmark matrix
 pub const WAIT_MODES: &[WaitMode] = &[WaitMode::BusyPoll, WaitMode::Recv, WaitMode::RecvTimeout];
 
 impl WaitMode {
-    /// Benchmark metadata
+    /// Parses a wait mode CLI value
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "busy-poll" => Some(Self::BusyPoll),
@@ -23,7 +23,7 @@ impl WaitMode {
         }
     }
 
-    /// Benchmark metadata
+    /// Returns the CLI/report string for this wait mode
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::BusyPoll => "busy-poll",

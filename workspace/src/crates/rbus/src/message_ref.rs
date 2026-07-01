@@ -7,7 +7,7 @@ use rbus_core::Sequence;
 use crate::stream::{ReadReservation, StreamInner};
 use crate::subscriber::Subscriber;
 
-/// Stream runtime metadata
+/// Borrowed message returned by a subscriber receive operation
 pub struct MessageRef<'subscriber> {
     stream: NonNull<StreamInner>,
     slot_index: usize,
@@ -36,19 +36,19 @@ impl<'subscriber> MessageRef<'subscriber> {
         }
     }
 
-    /// Payload metadata
+    /// Returns the received payload bytes
     pub fn as_slice(&self) -> &[u8] {
         // SAFETY: ReadReservation pins the slot until MessageRef::drop, and Subscriber keeps
-        // the mapped stream alive for the whole 'subscriber lifetime.
+        // the mapped stream alive for the whole 'subscriber lifetime
         unsafe { core::slice::from_raw_parts(self.payload_pointer, self.length) }
     }
 
-    /// Sequence metadata
+    /// Returns the stream sequence assigned by the publisher
     pub const fn sequence(&self) -> Sequence {
         self.sequence
     }
 
-    /// Returns a value
+    /// Returns the publisher timestamp stored with the message
     pub const fn timestamp_ns(&self) -> u64 {
         self.timestamp_ns
     }
@@ -56,7 +56,7 @@ impl<'subscriber> MessageRef<'subscriber> {
 
 impl Drop for MessageRef<'_> {
     fn drop(&mut self) {
-        // SAFETY: Subscriber keeps attached stream Arcs alive while MessageRef<'subscriber> exists.
+        // SAFETY: Subscriber keeps attached stream Arcs alive while MessageRef<'subscriber> exists
         unsafe {
             self.stream
                 .as_ref()

@@ -1,4 +1,4 @@
-//! Control protocol metadata
+//! Fixed-size control protocol frame header
 
 use super::opcode::Opcode;
 
@@ -9,15 +9,15 @@ pub struct FrameHeader {
     pub opcode: Opcode,
     /// Flags
     pub flags: u16,
-    /// Payload metadata
+    /// Payload byte length following the frame header
     pub payload_length: u32,
 }
 
 impl FrameHeader {
-    /// Control protocol metadata
+    /// Encoded byte length of a frame header
     pub const ENCODED_SIZE: usize = 8;
 
-    /// Control protocol metadata
+    /// Creates a frame header with an opcode, flags and payload length
     pub const fn new(opcode: Opcode, flags: u16, payload_length: u32) -> Self {
         Self {
             opcode,

@@ -1,4 +1,4 @@
-//! Internal documentation
+//! Linux IPC building blocks used by rbus control and data planes
 
 pub mod clock;
 pub mod control;

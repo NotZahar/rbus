@@ -1,4 +1,4 @@
-//! Stream runtime metadata
+//! Creation, mapping and inspection of stream shared-memory segments
 
 use rbus_core::atomic::ordering::{
     COUNTER_ORDERING, READER_MASK_UPDATE_ORDERING, SEGMENT_FLAG_OBSERVE_ORDERING,
@@ -19,7 +19,7 @@ const COMPONENT_IPC: &str = "rbus-ipc";
 const COUNTER_INCREMENT: u64 = 1;
 const SEGMENT_HEADER_OFFSET: usize = 0;
 
-/// Shared memory ABI metadata
+/// Static metadata required to attach an existing stream segment
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StreamSegmentMetadata {
     /// Stream id daemon registry
@@ -28,38 +28,38 @@ pub struct StreamSegmentMetadata {
     pub publisher_id: PublisherId,
     /// Stable topic hash
     pub topic_hash: TopicHash,
-    /// Internal documentation
+    /// Total byte length of the mapped segment
     pub segment_size: usize,
-    /// Payload metadata
+    /// Maximum payload bytes stored in each slot
     pub slot_size: usize,
     /// Depth ring buffer
     pub depth: usize,
 }
 
-/// Daemon runtime metadata
+/// Newly created stream segment and its owned descriptor
 pub struct CreatedStreamSegment {
-    /// Internal documentation
+    /// Metadata needed by subscribers to map the segment
     pub metadata: StreamSegmentMetadata,
-    /// Linux IPC metadata
+    /// Memfd backing the stream segment
     pub file_descriptor: OwnedFileDescriptor,
 }
 
-/// Stream runtime metadata
+/// Point-in-time stream segment header and counter state
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct StreamSegmentSnapshot {
-    /// Daemon runtime metadata
+    /// Metadata used to attach the stream
     pub metadata: StreamSegmentMetadata,
-    /// Shared memory ABI metadata
+    /// ABI version read from the mapped segment header
     pub abi_version: u32,
-    /// Internal documentation
+    /// Segment lifecycle flags read from the header
     pub flags: u64,
-    /// Sequence metadata
+    /// Publisher write sequence read from the header
     pub write_sequence: u64,
     /// Snapshot stream counters
     pub stats: Stats,
 }
 
-/// Shared memory ABI metadata
+/// Creates and initializes a writable stream segment
 pub fn create_stream_segment(
     publisher_id: PublisherId,
     stream_id: StreamId,
@@ -91,7 +91,7 @@ pub fn create_stream_segment(
     })
 }
 
-/// Shared memory ABI metadata
+/// Maps and validates an existing stream segment
 pub fn map_stream_segment(
     file_descriptor: &OwnedFileDescriptor,
     metadata: StreamSegmentMetadata,
@@ -115,7 +115,7 @@ pub fn map_stream_segment(
     Ok((mapping, layout))
 }
 
-/// Stream runtime metadata
+/// Reads a diagnostic snapshot from a stream segment
 pub fn snapshot_stream_segment(
     file_descriptor: &OwnedFileDescriptor,
     metadata: StreamSegmentMetadata,
@@ -139,7 +139,7 @@ pub fn snapshot_stream_segment(
     })
 }
 
-/// Publisher runtime metadata
+/// Marks a stream as closed and increments its disconnect counter
 pub fn mark_stream_closed(
     file_descriptor: &OwnedFileDescriptor,
     metadata: StreamSegmentMetadata,
@@ -154,7 +154,7 @@ pub fn mark_stream_closed(
     Ok(())
 }
 
-/// Subscriber runtime metadata
+/// Clears all reader pins owned by one subscriber id
 pub fn clear_subscriber_reader_bits(
     file_descriptor: &OwnedFileDescriptor,
     metadata: StreamSegmentMetadata,
@@ -200,7 +200,7 @@ fn initialize_segment(
     let counters_pointer = mapping
         .typed_pointer::<StreamCounters>(layout.counters_offset, "initialize_segment::counters")?;
 
-    // SAFETY: Pointers were bounds and alignment checked against the newly created mapping.
+    // SAFETY: Pointers were bounds and alignment checked against the newly created mapping
     unsafe {
         core::ptr::write(
             header_pointer.as_ptr(),
@@ -230,7 +230,7 @@ fn initialize_segment(
             slot_offset(layout, slot_index, "initialize_segment::slot_offset")?,
             "initialize_segment::slot",
         )?;
-        // SAFETY: The slot pointer was checked for bounds and alignment before writing.
+        // SAFETY: The slot pointer was checked for bounds and alignment before writing
         unsafe {
             core::ptr::write(slot_pointer.as_ptr(), SlotHeader::new());
         }
@@ -271,7 +271,7 @@ fn validate_segment_header(
 fn segment_header(mapping: &MappedRegion) -> Result<&SegmentHeader, Warning> {
     let pointer =
         mapping.typed_pointer::<SegmentHeader>(SEGMENT_HEADER_OFFSET, "segment_header")?;
-    // SAFETY: The pointer is within the live mapping and aligned for SegmentHeader.
+    // SAFETY: The pointer is within the live mapping and aligned for SegmentHeader
     Ok(unsafe { pointer.as_ref() })
 }
 
@@ -281,7 +281,7 @@ fn stream_counters(
 ) -> Result<&StreamCounters, Warning> {
     let pointer =
         mapping.typed_pointer::<StreamCounters>(layout.counters_offset, "stream_counters")?;
-    // SAFETY: The pointer is within a validated stream mapping and aligned for StreamCounters.
+    // SAFETY: The pointer is within a validated stream mapping and aligned for StreamCounters
     Ok(unsafe { pointer.as_ref() })
 }
 
@@ -294,7 +294,7 @@ fn slot_header(
         slot_offset(layout, slot_index, "slot_header::offset")?,
         "slot_header",
     )?;
-    // SAFETY: The pointer is within a validated stream mapping and aligned for SlotHeader.
+    // SAFETY: The pointer is within a validated stream mapping and aligned for SlotHeader
     Ok(unsafe { pointer.as_ref() })
 }
 

@@ -1,6 +1,6 @@
 use rbus_core::warning::{Warning, WarningCode};
 
-/// Internal documentation
+/// Top-level CLI command selected by the user
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum CliCommand {
     /// list
@@ -21,7 +21,7 @@ pub enum CliCommand {
     Help { command: Option<HelpCommand> },
 }
 
-/// CLI metadata
+/// Command-specific help topic
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HelpCommand {
     /// list
@@ -40,19 +40,19 @@ pub enum HelpCommand {
     BenchSmoke,
 }
 
-/// CLI metadata
+/// Parsed CLI arguments shared by all commands
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CliArguments {
-    /// Domain rbus
+    /// Daemon domain name
     pub domain: String,
     /// JSON output
     pub json: bool,
-    /// Internal documentation
+    /// Command to execute
     pub command: CliCommand,
 }
 
 impl CliArguments {
-    /// CLI metadata
+    /// Parses CLI arguments from an iterator
     pub fn parse<I>(arguments: I) -> Result<Self, Warning>
     where
         I: IntoIterator<Item = String>,

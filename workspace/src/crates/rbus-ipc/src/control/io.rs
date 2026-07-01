@@ -1,4 +1,4 @@
-//! Control protocol metadata
+//! Read and write helpers for control protocol frames
 
 use std::io::{Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
@@ -13,28 +13,28 @@ use super::{FrameHeader, decode_frame_header, encode_frame_header};
 
 const COMPONENT_IPC: &str = "rbus-ipc";
 
-/// Daemon runtime metadata
+/// Frame flag indicating that the payload is JSON
 pub const CONTROL_FLAG_JSON: u16 = 1;
 
-/// Control protocol metadata
+/// Decoded control frame without attached file descriptors
 #[derive(Debug, Eq, PartialEq)]
 pub struct ControlFrame {
-    /// Control protocol metadata
+    /// Fixed-size control frame header
     pub header: FrameHeader,
-    /// Control protocol metadata
+    /// Frame payload bytes
     pub payload: Vec<u8>,
 }
 
-/// Control protocol metadata
+/// Decoded control frame with received file descriptors
 #[derive(Debug)]
 pub struct ControlFrameWithFileDescriptors {
-    /// Control protocol metadata
+    /// Fixed-size header and payload bytes
     pub frame: ControlFrame,
-    /// Linux IPC metadata
+    /// File descriptors received through `SCM_RIGHTS`
     pub file_descriptors: Vec<OwnedFileDescriptor>,
 }
 
-/// Stream runtime metadata
+/// Writes one control frame to a connected Unix stream
 pub fn write_control_frame(
     stream: &mut UnixStream,
     header: FrameHeader,
@@ -65,7 +65,7 @@ pub fn write_control_frame(
         .map_err(|error| warning_from_io(error, "write_control_frame::payload"))
 }
 
-/// Control protocol metadata
+/// Writes one control frame and optional file descriptors in a single socket message
 pub fn write_control_frame_with_file_descriptors(
     stream: &mut UnixStream,
     header: FrameHeader,
@@ -110,7 +110,7 @@ pub fn write_control_frame_with_file_descriptors(
     }
 }
 
-/// Stream runtime metadata
+/// Reads one control frame from a connected Unix stream
 pub fn read_control_frame(
     stream: &mut UnixStream,
     max_payload_length: usize,
@@ -181,7 +181,7 @@ pub fn read_control_frame(
     Ok(ControlFrame { header, payload })
 }
 
-/// Control protocol metadata
+/// Reads one control frame and any attached file descriptors
 pub fn read_control_frame_with_file_descriptors(
     stream: &mut UnixStream,
     max_payload_length: usize,

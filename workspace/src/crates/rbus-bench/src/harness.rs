@@ -18,7 +18,7 @@ use crate::worker::run_worker;
 
 const WARNING_EXIT_CODE: u8 = 2;
 
-/// Benchmark metadata
+/// Runs benchmark mode and returns the process exit code
 pub fn run(arguments: BenchArguments) -> ExitCode {
     match arguments.mode {
         BenchMode::Help => ExitCode::SUCCESS,

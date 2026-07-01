@@ -96,7 +96,7 @@ pub struct DoctorReport {
     pub warnings_total: u64,
 }
 
-/// Daemon runtime metadata
+/// Runs daemon health checks for a domain
 pub fn doctor_domain(registry: &DaemonRegistry, domain: &str) -> Result<DoctorReport, Warning> {
     if domain.is_empty() {
         return Err(Warning::new(
@@ -169,7 +169,7 @@ pub fn doctor_domain(registry: &DaemonRegistry, domain: &str) -> Result<DoctorRe
     })
 }
 
-/// CLI metadata
+/// Formats a doctor report as text or JSON
 pub fn format_doctor_report(domain: &str, report: &DoctorReport, json: bool) -> String {
     if json {
         format!(
@@ -468,7 +468,7 @@ fn read_resource_limit(
 }
 
 fn effective_user_id() -> u32 {
-    // SAFETY: Required invariants are upheld
+    // SAFETY: `geteuid` has no pointer arguments and returns the effective user id
     unsafe { libc::geteuid() }
 }
 

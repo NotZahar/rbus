@@ -33,17 +33,17 @@ const _: () = assert!(HOT_PATH_DEPTH.is_power_of_two());
 const _: () = assert!(HOT_PATH_DEPTH >= HOT_PATH_WARMUP_ITERATIONS + HOT_PATH_MEASURED_ITERATIONS);
 const _: () = assert!(HOT_PATH_PAYLOAD_SENTINEL_INDEX < HOT_PATH_PAYLOAD_LENGTH);
 
-/// Internal documentation
+/// Operation measured by the hot-path syscall probe
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HotPathOperation {
     /// `Publisher::loan` + `LoanedMessage::publish`
     Publish,
-    /// Subscriber runtime metadata
+    /// `Subscriber::try_recv`
     TryRecv,
 }
 
 impl HotPathOperation {
-    /// CLI metadata
+    /// Parses a hot-path operation CLI value
     pub fn parse(value: &str) -> Option<Self> {
         match value {
             "publish" => Some(Self::Publish),
@@ -52,7 +52,7 @@ impl HotPathOperation {
         }
     }
 
-    /// CLI metadata
+    /// Returns the CLI/report string for this operation
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Publish => "publish",
@@ -75,7 +75,7 @@ impl HotPathOperation {
     }
 }
 
-/// Internal documentation
+/// Report emitted by a hot-path syscall probe
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HotPathSyscallReport {
     operation: HotPathOperation,
@@ -96,7 +96,7 @@ impl HotPathSyscallReport {
         }
     }
 
-    /// Returns a value
+    /// Serializes the probe report as JSON
     pub fn to_json(self) -> String {
         format!(
             concat!(
@@ -183,7 +183,7 @@ fn receive_required<'subscriber>(
 }
 
 fn write_stdout_marker(marker: &'static [u8]) -> Result<(), Warning> {
-    // SAFETY: Required invariants are upheld
+    // SAFETY: `marker` is a live byte slice and stdout is a process-owned file descriptor
     let written = unsafe { libc::write(libc::STDOUT_FILENO, marker.as_ptr().cast(), marker.len()) };
     if written == marker.len() as isize {
         Ok(())

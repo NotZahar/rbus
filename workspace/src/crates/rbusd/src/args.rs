@@ -1,18 +1,18 @@
 use rbus_core::warning::{Warning, WarningCode};
 
-/// Daemon runtime metadata
+/// Parsed command-line arguments for the daemon
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DaemonArguments {
-    /// Domain rbus
+    /// Daemon domain name
     pub domain: String,
-    /// Internal documentation
+    /// Run in the foreground instead of daemonizing
     pub foreground: bool,
-    /// Linux IPC metadata
+    /// Run the short startup smoke path
     pub smoke: bool,
 }
 
 impl DaemonArguments {
-    /// Parses a value
+    /// Parses daemon arguments from an iterator
     pub fn parse<I>(arguments: I) -> Result<Self, Warning>
     where
         I: IntoIterator<Item = String>,
