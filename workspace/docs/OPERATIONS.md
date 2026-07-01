@@ -72,9 +72,11 @@ Payload через daemon не проходит
 - `REGISTER_SUBSCRIBER`
 - `ATTACH_STREAMS`
 - `NOTIFY_STREAM_ADDED`
-- `UNREGISTER`
 - `REREGISTER_PUBLISHER`
 - `REREGISTER_SUBSCRIBER`
+
+`UNREGISTER` реализован в протоколе и тестах `rbusd`, но обычный Drop клиента
+очищается закрытием управляющего socket-а
 
 Для runtime-команд warning является fatal: daemon завершает обработку и процесс
 выходит с кодом `2`. Клиент обычно получает `WarningCode::Disconnected`

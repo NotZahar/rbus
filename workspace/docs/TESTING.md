@@ -1,6 +1,6 @@
 # Тестирование
 
-Основная проверка:
+Основная проверка из корня репозитория:
 
 ```bash
 npm run check
@@ -46,8 +46,8 @@ gates, `bench:strace` совмещает hot-path syscall smoke и коротк�
 | Atomic protocols | `crates/rbus-core/tests/atomic_protocol_model_tests.rs` | reader pin, writer overwrite, ordering без `SeqCst` |
 | Control codec | `crates/rbus-ipc/tests/control_codec_tests.rs` | binary frames и HELLO |
 | IPC primitives | `crates/rbus-ipc/tests/*` | `memfd`, `mmap`, `SCM_RIGHTS`, futex, topic wait |
-| Warning coverage | `crates/rbus-core/tests/warning_path_coverage_tests.rs` | каждый `WarningCode` имеет воспроизводимый path |
-| Warning paths | `crates/rbus/tests`, `crates/rbus-ipc/tests` | counters/state меняются только ожидаемо |
+| Warning coverage | `crates/rbus-core/tests/warning_path_coverage_tests.rs` | каталог code -> test -> state assertion |
+| Warning paths | `crates/rbus/tests`, `crates/rbus-ipc/tests` | data-plane и IPC counters/state меняются ожидаемо |
 | Cross-process data plane | `crates/rbus/tests/cross_process_data_plane_tests.rs` | real process publishers/subscribers |
 | Examples | `examples/tests/examples_tests.rs` | examples работают через public API |
 | Crash recovery | `crates/rbus/tests/crash_recovery_tests.rs` | dead subscriber, dead publisher, daemon restart |

@@ -4,12 +4,12 @@
 
 Коды предупреждений поддерживаются в `rbus-core::warning::WarningCode`; каждый
 код имеет текстовое описание и тест на наличие описания. Отдельный каталог
-покрытия `crates/rbus-core/tests/warning_path_coverage_tests.rs` фиксирует
-воспроизводимый тест пути предупреждения и проверку counters/state для каждого
-`WarningCode`, чтобы новый код нельзя было добавить только с текстом
+покрытия `crates/rbus-core/tests/warning_path_coverage_tests.rs` фиксирует имя
+связанного теста и ожидаемую проверку counters/state для каждого `WarningCode`,
+чтобы новый код нельзя было добавить только с текстом
 
 `Warning` хранит код, компонент, операцию и compact context без выделения памяти
-в куче. Русский текст вычисляется из `WarningCode`, а optional context-поля
+в куче. Английский текст сообщения вычисляется из `WarningCode`, а optional context-поля
 хранятся через bitmask. Это сохраняет публичный тип
 `RbusResult<T> = Result<T, Warning>` без boxing и без clippy warning
 `result_large_err`

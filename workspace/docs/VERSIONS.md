@@ -24,4 +24,5 @@ segment с topic-wait segment
 segment или корректно прочитать старый управляющий frame, соответствующая ABI
 или версия протокола должна измениться. Резервный путь на старый layout
 запрещён; несовпадение завершается `WarningCode::SegmentAbiMismatch` или
-`WarningCode::ProtocolMismatch` со stacktrace на fatal path
+`WarningCode::ProtocolMismatch`, а CLI/daemon/benchmark при аварийном
+завершении печатают stacktrace

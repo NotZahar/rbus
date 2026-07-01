@@ -1,6 +1,6 @@
 # Benchmark-и
 
-Короткая проверка:
+Короткая проверка из `workspace/src`:
 
 ```text
 cargo build --profile bench -p rbusd -p rbus-bench
@@ -14,8 +14,8 @@ target/release/rbus-bench --suite --format json
 target/release/rbus-bench --suite --format csv
 ```
 
-TypeScript-сценарии `bench:reference`, `bench:perf`, `bench:strace` и
-`hot-path-syscall-smoke` тоже используют bench profile и запускают
+npm-команды `bench:reference`, `bench:perf`, `bench:strace` и workspace-скрипт
+`hot-path-syscall-smoke.ts` тоже используют bench profile и запускают
 `target/release/rbus-bench`
 
 ## Режимы нагрузки
@@ -47,7 +47,6 @@ Paced suite:
 
 Suite имеет жесткий предел времени 20 минут; при исчерпании бюджета прогон
 завершается `Timeout`
-
 
 ## Transport-режимы
 

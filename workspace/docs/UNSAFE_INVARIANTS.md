@@ -1,13 +1,14 @@
 # Unsafe-инварианты
 
-Unsafe допускается только в низкоуровневых местах: mmap, доступ через raw
-pointer к payload slots, ancillary data для `SCM_RIGHTS`, граница futex syscall
-и привязка времени жизни `LoanedMessage`/`MessageRef`
+Unsafe используется в низкоуровневых местах: syscall/FFI wrappers, mmap,
+доступ через raw pointer к payload slots, ancillary data для `SCM_RIGHTS`,
+граница futex syscall, allocator instrumentation и привязка времени жизни
+`LoanedMessage`/`MessageRef`
 
-Каждый unsafe-блок должен иметь комментарий `SAFETY` на английском языке с инвариантами
-и ссылками на тесты
+Каждый unsafe-блок должен иметь комментарий `SAFETY` на английском языке с
+инвариантом. Ссылки на основные тесты перечислены ниже
 
-Проверенные зоны:
+Основные проверенные зоны:
 
 - `rbus-ipc::mmap`: pointer создаётся только из успешного `mmap`, освобождается
   через `munmap` в `Drop`; typed projection проверяет границы и alignment до
@@ -23,6 +24,8 @@ pointer к payload slots, ancillary data для `SCM_RIGHTS`, граница fut
   `rbusd`, а seqpacket framing проверяет `scm_rights_tests`
 - `rbus-ipc::futex`: pointer берётся из `AtomicU32` и используется только на
   время системного вызова; тест `futex_wake_private_returns_zero_without_waiters`
+- `rbus-ipc` syscall wrappers для `memfd`, `eventfd`, `clock_gettime` и FD
+  ownership покрыты `memfd_tests`, `eventfd_tests`, `clock_tests` и IPC smoke
 - `rbus-ipc::topic_wait`: `TopicWaitHeader` pointer проверяется при map segment-а
   фиксированного размера, созданного `create_topic_wait_segment`; короткая
   benchmark-проверка `blocking_wait_wake_latency_ns` проходит через это mapping

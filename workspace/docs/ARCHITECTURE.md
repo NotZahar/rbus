@@ -31,7 +31,7 @@ subscribers читают attached stream-ы topic-а
 ## Управляющая плоскость
 
 `rbusd` слушает Unix `SOCK_SEQPACKET` socket domain-а и обрабатывает binary
-frames. Основные runtime-команды:
+frames. Основные команды протокола времени выполнения:
 
 - `REGISTER_PUBLISHER`
 - `REGISTER_SUBSCRIBER`
