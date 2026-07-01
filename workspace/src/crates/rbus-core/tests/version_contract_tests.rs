@@ -11,11 +11,11 @@ const EXPECTED_CONTROL_PROTOCOL_VERSION: u16 = 2;
 const EXPECTED_STREAM_SEGMENT_ABI_VERSION: u32 = 5;
 const EXPECTED_TOPIC_WAIT_ABI_VERSION: u32 = 1;
 const WORKSPACE_VERSION_LINE: &str = "version = \"0.1.0\"";
-const API_VERSION_DOC_ROW: &str = "| Public API | `0.1.0` |";
-const CONTROL_PROTOCOL_DOC_ROW: &str = "| Control protocol | `2` |";
+const API_VERSION_DOC_ROW: &str = "| Публичный API | `0.1.0` |";
+const CONTROL_PROTOCOL_DOC_ROW: &str = "| Управляющий протокол | `2` |";
 const STREAM_SEGMENT_ABI_DOC_ROW: &str = "| Stream segment ABI | `5` |";
 const TOPIC_WAIT_ABI_DOC_ROW: &str = "| Topic wait segment ABI | `1` |";
-const README_VERSION_LINK_TARGET: &str = "(../docs/VERSIONS.ru.md)";
+const README_VERSION_LINK_TARGET: &str = "(../docs/VERSIONS.md)";
 const CHANGELOG_STREAM_ABI_LINE: &str = "- Stream segment ABI version: `5`.";
 const CHANGELOG_TOPIC_WAIT_ABI_LINE: &str = "- Topic wait segment ABI version: `1`.";
 
@@ -33,8 +33,8 @@ fn api_and_abi_versions_are_centrally_synced() {
 
     let workspace_root = workspace_root();
     let cargo_toml = read_workspace_file(&workspace_root, "src/Cargo.toml");
-    let versions_document = read_workspace_file(&workspace_root, "docs/VERSIONS.ru.md");
-    let readme = read_workspace_file(&workspace_root, "src/README.ru.md");
+    let versions_document = read_workspace_file(&workspace_root, "docs/VERSIONS.md");
+    let readme = read_workspace_file(&workspace_root, "src/README.md");
     let changelog = read_workspace_file(&workspace_root, "src/CHANGELOG.ru.md");
 
     assert_contains(&cargo_toml, WORKSPACE_VERSION_LINE);
