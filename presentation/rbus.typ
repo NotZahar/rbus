@@ -169,12 +169,12 @@
 
 - Универсальные робототехнические фреймворки (по типу ROS 2) часто рассчитаны на широкий класс систем
 
-- В них есть сетевые сценарии, разные режимы доставки (QoS-ы) и куча runtime-настроек
+- В них есть сетевые сценарии, разные режимы доставки (QoS-ы) и большое число runtime-параметров
 
 - Есть сценарии, где такая универсальность не требуется - например, когда процессы живут физически в одном месте
 
 #v(0.7em)
-#accent[Отсюда возникла идея сделать локальный транспорт, который и работает шустро, и не ест много ресурсов CPU]
+#accent[Отсюда возникла идея сделать локальный транспорт, который обеспечивает низкую задержку и низкую нагрузку на CPU]
 
 == Цель проекта
 
@@ -190,7 +190,7 @@
 
 - #accent[Простая модель и локальный scope] — простой и понятный API, одно устройство, один daemon, без попытки сделать универсальный middleware
 
-- #accent[Надёжность] — освобождение ресурсов при падении/штатной остановки процессов, restart daemon-а не должен ломать уже настроенный путь для данных
+- #accent[Надёжность] — освобождение ресурсов при падении или штатной остановке процессов, restart daemon-а не должен ломать уже настроенный путь для данных
 
 - #accent[Простая и информативная диагностика] — cli-утилиты, stack trace-ы и т. д.
 
@@ -257,8 +257,6 @@
 
 == Flow
 
-#v(0.55em)
-
 #grid(
   columns: (1fr, 1fr),
   gutter: 0.9em,
@@ -314,59 +312,54 @@
   ],
 )
 
-== Ring в shared memory
+== Stream segment
 
-#lead[Ring — фиксированный массив slot-ов, который используется циклически]
+#lead[Stream — это per-publisher message stream, реализованный как shared-memory ring segment]
 
 #v(0.35em)
 
 #align(center)[
-  #scale(x: 65%, y: 65%, reflow: true)[
-    #box(width: 25cm)[
-      ```text
-      ┌──────────────────────┐
-      │ SegmentHeader        │  общая информация о stream-е
-      ├──────────────────────┤
-      │ StreamCounters       │  статистика
-      ├──────────────────────┤
-      │ SlotHeader[0]        │  metadata slot-а 0
-      │ SlotHeader[1]        │  metadata slot-а 1
-      │ ...                  │
-      │ SlotHeader[63]       │  metadata slot-а 63
-      ├──────────────────────┤
-      │ PayloadSlot[0]       │  bytes сообщения для slot-а 0
-      │ PayloadSlot[1]       │  bytes сообщения для slot-а 1
-      │ ...                  │
-      │ PayloadSlot[63]      │  bytes сообщения для slot-а 63
-      └──────────────────────┘
-      ```
+  #pad(left: 0.0cm)[
+    #scale(x: 65%, y: 65%, reflow: true)[
+      #box(width: 25cm)[
+        ```text
+        ┌──────────────────────┐
+        │ SegmentHeader        │  общая информация о stream-е
+        ├──────────────────────┤
+        │ StreamCounters       │  статистика
+        ├──────────────────────┤
+        │ SlotHeader[0]        │  metadata slot-а 0
+        │ SlotHeader[1]        │  metadata slot-а 1
+        │ ...                  │
+        │ SlotHeader[63]       │  metadata slot-а 63
+        ├──────────────────────┤
+        │ PayloadSlot[0]       │  bytes сообщения для slot-а 0
+        │ PayloadSlot[1]       │  bytes сообщения для slot-а 1
+        │ ...                  │
+        │ PayloadSlot[63]      │  bytes сообщения для slot-а 63
+        └──────────────────────┘
+        ```
+      ]
     ]
   ]
 ]
 
 #v(0.18em)
 
-Publisher пишет payload не "просто в stream", а в конкретный payload slot внутри stream-а:
+- Stream — это SPMC ring, каждый publisher получает свой segment и пишет только в него
 
-#v(0.08em)
+- Subscriber читает stream-ы round-robin, поэтому порядок между publisher-ами — это порядок наблюдения subscriber-ом
 
 #align(center)[
-  #scale(x: 72%, y: 72%, reflow: true)[
+  #scale(x: 65%, y: 65%, reflow: true)[
     ```text
-    сообщение #0  -> PayloadSlot[0]
-    сообщение #1  -> PayloadSlot[1]
-    сообщение #2  -> PayloadSlot[2]
-    ...
-    сообщение #63 -> PayloadSlot[63]
-    сообщение #64 -> PayloadSlot[0] снова
-    сообщение #65 -> PayloadSlot[1] снова
+    topic "/camera/front/image"
+    ├── stream #1 от publisher #1
+    ├── stream #2 от publisher #2
+    └── stream #3 от publisher #3
     ```
   ]
 ]
-
-#v(0.08em)
-
-Поэтому это называется ring: после последней ячейки возвращаемся в начало.
 
 == Гарантии hot path
 
@@ -386,51 +379,47 @@ Publisher пишет payload не "просто в stream", а в конкрет
 #accent[Как проверяется]
 
 - custom allocator tests
+
 - marker-based strace smoke
-- Loom-модели atomic protocol
+
+- loom-модели atomic protocol
+
 - layout tests на cache-line counters
 
 == Технологии
 
-#lead[Минимальный Linux/Rust стек]
+#lead[Минимальный стек]
 
 #v(0.55em)
 
-- #accent[Rust 2024] — workspace package 0.1.0, warnings=deny, dead_code=deny
-- #accent[Linux IPC] — memfd_create, ftruncate, mmap MAP_SHARED, Unix SOCK_SEQPACKET, SCM_RIGHTS
-- #accent[Синхронизация] — futex для blocking recv, acquire/release atomics для slot protocol
-- #accent[Benchmarking] — perf stat, strace, CSV/JSON reports, regression gates
+- #accent[Rust 2024] — warnings=deny, dead_code=deny
 
-== Методика измерений
+- #accent[Linux IPC] — memfd_create, ftruncate, mmap MAP_SHARED, SCM_RIGHTS, Unix SOCK_SEQPACKET
+
+- #accent[Синхронизация] — futex для блокирующего пути, acquire/release atomics для slot protocol
+
+- #accent[Бенчмарки] — perf stat, strace
+
+== Бенчмарки
 
 #lead[Окружение и режимы нагрузки]
 
 #v(0.55em)
 
-- Ubuntu 26.04 LTS, Linux 7.0.0-27-generic
-- Intel Core i7-11700F: 8C/16T
-- governor: powersave, intel_pstate active
-- cargo build --profile bench
-- rbusd и rbus-bench из target/release
+- Ubuntu 26.04 LTS, Linux 7.0
+
+- Intel Core i7-11700F
 
 #v(0.55em)
 #accent[Режимы]
 
 - saturated / busy-poll: 4 publisher-а, 8 subscriber-ов
+
 - payload: 64 B, 4 KiB, 64 KiB, 1 MiB
+
 - paced / 30 Hz: controlled-load latency
+
 - low-CPU recv: 5 секунд, 150 сообщений, 1P1S
-
-== Что сравниваем
-
-#lead[Unix socket baseline против rbus SHM data path]
-
-#v(0.55em)
-
-- #accent[Одинаковый scope] — локальный IPC на одной Linux-машине
-- #accent[Unix socket] — payload проходит через kernel socket path и socket buffer
-- #accent[rbus] — payload лежит в shared-memory ring, loaned path не копирует payload
-- #accent[Что проверяем] — что даёт переход от socket baseline к SHM data path
 
 == Результаты: throughput
 
@@ -447,13 +436,15 @@ Publisher пишет payload не "просто в stream", а в конкрет
   columns: (1fr, 1fr, 1fr),
   gutter: 0.9em,
   stat([5.7x], [loaned-fill vs unix socket]),
-  stat([0], [syscalls/message в rbus busy-poll data path]),
-  stat([0], [allocations/message в rbus busy-poll hot path]),
+  stat([0], [syscalls/message в rbus в режиме busy-poll]),
+  stat([0], [allocations/message в rbus в режиме busy-poll]),
 )
 
 == Результаты: большие payload
 
-#lead[Saturated busy-poll, effective delivery GiB/s]
+#lead[Saturated busy-poll, logical/effective delivery GiB/s]
+
+effective delivery = payload_size × delivered_messages/s, с учётом fanout; это не physical DRAM bandwidth
 
 #v(0.55em)
 
@@ -463,12 +454,8 @@ Publisher пишет payload не "просто в stream", а в конкрет
 #result-row([64 KiB], [120.2], [92.1], [21.8], [5.5x])
 #result-row([1 MiB], [146.1], [154.1], [15.6], [9.4x])
 
-#v(0.75em)
-#accent[metadata-only]
-
-1 MiB: 661.2 GiB/s logical/effective
-
-Это commit/control overhead без записи payload в measured window
+#v(0.55em)
+x = rbus loaned-fill / unix-socket
 
 == Результаты: задержка под нагрузкой
 
@@ -483,9 +470,14 @@ Publisher пишет payload не "просто в stream", а в конкрет
 #result-row([64 KiB], [23.5 us], [23.8 us], [276.1 us], [12x])
 #result-row([1 MiB], [23.2 us], [110.2 us], [1615.5 us], [70x])
 
+#v(0.55em)
+x = unix-socket p99 / rbus loaned-fill p99
+
 #v(0.75em)
 - Этот режим показывает нижнюю границу latency
+
 - Он использует busy-poll и почти целое ядро на worker path
+
 - Metadata-only не используется как основной latency-result
 
 == Результаты: низкий CPU в recv
@@ -497,75 +489,87 @@ Publisher пишет payload не "просто в stream", а в конкрет
 #accent[64 B]
 
 - rbus loaned-fill: p99 81 us, 0.004 cores
+
 - unix-socket: p99 103 us, 0.001 cores
-- вывод: rbus быстрее по latency, Unix дешевле по CPU
+
+- вывод: rbus лучше по latency, Unix дешевле по CPU
 
 #v(0.55em)
 #accent[1 MiB]
 
 - rbus loaned-fill: p99 231 us, 0.014 cores
+
 - unix-socket: p99 1369 us, 0.019 cores
-- вывод: rbus ниже по latency при сопоставимом CPU
+
+- вывод: rbus лучше по latency при сопоставимом CPU
 
 == Результаты: корректность
 
-#lead[Benchmark-и не должны скрывать ошибки доставки]
+#lead[Не скрываем ошибки доставки]
 
 #v(0.55em)
 
 #grid(
   columns: (1fr, 1fr, 1fr),
-  gutter: 0.9em,
   stat([0], [warning_count в выбранных строках]), stat([0], [skipped_messages]), stat([0], [publish deadline misses]),
+  gutter: 0.9em,
 )
 
 #v(0.75em)
 #accent[Тесты]
 
 - cross-process data plane tests
+
 - examples suite
+
 - subscriber crash с удержанным MessageRef
+
 - publisher crash
+
 - rbusd restart
 
-== Сильные стороны и ограничения
+== Что получилось хорошо, а что - нет
 
-#lead[Что получилось и где границы]
-
-#v(0.55em)
-
-#accent[Сильные стороны]
+#accent[Хорошо]
 
 - payload не проходит через daemon
-- zero-copy loaned path
+
+- zero-copy при loaned path
+
 - высокий throughput на локальной машине
-- microsecond-level paced latency в busy-poll
-- низкий CPU recv path через futex
+
+- микросекундные задержки при в busy-poll
+
+- низкий расход CPU в блокирующем режиме (через futex)
 
 #v(0.55em)
-#accent[Ограничения]
+#accent[Не очень хорошо]
 
-- Linux-specific IPC primitives
-- API пока Rust-only
-- нет сетевого транспорта
-- один stream ограничен 63 subscriber reader bits
-- low-CPU small payload не всегда дешевле Unix socket по CPU
+- жёсткая привязка к Linux-specific IPC примитивам
+
+- API пока только для Rust-а
+
+- нет не SHM-транспорта
+
+- один stream ограничен 63 subscriber reader bits (?)
+
+- низкий расход CPU (в блокирующем режиме) на малых payload не всегда дешевле Unix socket
 
 == Выводы
 
-#lead[rbus закрывает локальный IPC-срез проекта]
+#lead[Цель достигнута]
 
-#v(0.55em)
-
-- #accent[Цель достигнута] — реализован локальный message bus, где setup делает daemon, а payload идёт через shared memory
-- #accent[Ниша понятна] — fast local transport для процессов на одной машине, не замена универсального middleware
-- #accent[Результат измерен] — есть throughput, latency, perf/strace данные и regression tests
+Реализован локальный message bus, который было бы интересно довести до ума и внедрить в кейсах где важна скорость и дешевизна передачи данных
 
 #v(0.75em)
 #lead[Следующие шаги]
 
-- adapter для внешнего robotics stack
-- стабилизация API
-- C++ binding для robotics-кода
-- реальные sensor payloads
-- долгие soak-тесты
+- посмотреть что будет при реальных нагрузках в real-time системах
+
+- сравнить с другими транспортами production уровня - по типу iceoryx2 [https://iceoryx.io/]
+
+- упростить и стабилизировать API
+
+- сделать C++ binding-и и адаптеры к ROS2-системам
+
+- ...
